@@ -1,0 +1,10 @@
+.cache/
+build/
+DerivedData/
+*.xcodeproj/
+Keyboard/Resources/*.bin
+Host/Assets.xcassets/
+site/
+*.ipa
+__pycache__/
+
