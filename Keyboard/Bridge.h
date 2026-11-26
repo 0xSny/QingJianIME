@@ -5,6 +5,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic,copy) NSString *text;
 @property(nonatomic,copy) NSString *reading;
 @property(nonatomic) NSUInteger used;
+@property(nonatomic) BOOL learned;
 @end
 @interface QDecoder : NSObject
 -(instancetype)initWithLex:(NSString *)lex storage:(NSString *)path;

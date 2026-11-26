@@ -3,6 +3,7 @@ build/
 DerivedData/
 *.xcodeproj/
 Keyboard/Resources/*.bin
+Keyboard/Resources/Credits.txt
 Host/Assets.xcassets/
 site/
 *.ipa

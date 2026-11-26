@@ -18,7 +18,7 @@
     auto result=[NSMutableArray array];
     if(!input.length)return result;
     for(auto& h:_engine->decode(std::string((const char*)input.bytes,input.length),taps,fly,mask,space,prev.UTF8String,token)){
-        QHit *v=[QHit new];v.text=[NSString stringWithUTF8String:h.text.c_str()];v.reading=[NSString stringWithUTF8String:h.reading.c_str()];v.used=h.used;[result addObject:v];
+        QHit *v=[QHit new];v.text=[NSString stringWithUTF8String:h.text.c_str()];v.reading=[NSString stringWithUTF8String:h.reading.c_str()];v.used=h.used;v.learned=_engine->learned(h.text,h.reading);[result addObject:v];
     }
     return result;
 }

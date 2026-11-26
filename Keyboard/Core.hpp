@@ -126,6 +126,7 @@ public:
         }
     }
     void rollback(){for(auto& [k,v]:undo)assign(k,v);undo.clear();}
+    bool learned(const string& word,const string& reading)const{return memory.count(key(word,reading))!=0;}
     void erase(string word,string reading){assign(key(word,reading),{});undo.clear();}
     void clear(){auto copy=memory;for(auto& [k,v]:copy)assign(k,{});undo.clear();}
     uint32_t continuations(const string& raw,bool fly)const {
@@ -241,13 +242,21 @@ public:
             if(k.front()=='@')continue;
             auto tab=k.find('\t');if(tab==string::npos)continue;
             auto reading=k.substr(0,tab);std::istringstream seq(reading);string s;
-            std::set<unsigned> ends{0};
+            std::map<unsigned,bool> ends{{0,true}};
             while(seq>>s && !ends.empty()){
-                std::set<unsigned> next;
-                for(auto i:ends)if(i<n)for(auto m:lattice[i])if(m.penalty<=5 && s==pool+sounds[m.sid].full)next.insert(m.end);
+                std::map<unsigned,bool> next;
+                for(auto [i,exact]:ends)if(i<n)for(auto m:lattice[i]){
+                    if(s!=pool+sounds[m.sid].full)continue;
+                    std::string_view code(pool+(fly?sounds[m.sid].fly:sounds[m.sid].full));
+                    auto length=m.end-i-(raw[m.end-1]=='\''?1:0);
+                    if(length==0 || length>code.size() || raw.compare(i,length,code.data(),length)!=0)continue;
+                    const bool spelled=length==code.size();
+                    if(!spelled && length!=1 && !(length==2 && code[1]=='h'))continue;
+                    next[m.end]=next[m.end] || (exact && spelled);
+                }
                 ends.swap(next);
             }
-            if(ends.count(n))hits.push_back({k.substr(tab+1),reading,n,weight(k)+3,0});
+            if(ends.count(n))hits.push_back({k.substr(tab+1),reading,n,weight(k)+3,ends[n] || complete.empty() || complete.front().penalty>0 ? 0:2});
         }
         std::sort(hits.begin(),hits.end(),[](const Hit& a,const Hit& b){
             if(a.tier!=b.tier)return a.tier<b.tier;

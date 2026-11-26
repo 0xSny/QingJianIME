@@ -22,6 +22,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
     var dark = false, mode = 0, upper = false, locked = false, grid = false
     var filter = 0, gridPage = 0, latinPunctuation = false, offset: CGFloat = 0, paste = false
     var caps = [Cap](), slots = [(Int,CGRect)](), fingers = [UITouch:Finger]()
+    var forgetHit: QHit?, forgetPoint = CGPoint.zero
     weak var focusFinger: Finger?
     var pressedCap: Cap?, stamp = 0, lastShift = 0.0
     let click = KeyClick()
@@ -154,11 +155,13 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
             label(owner!.hits[i].text,in:r,size:18,color:ink)
             ink.withAlphaComponent(0.14).setFill();UIRectFill(CGRect(x:r.maxX-1/scale,y:10,width:1/scale,height:22))
         }
+        if let h=forgetHit {let r=forgetBox;face.setFill();UIBezierPath(roundedRect:r,cornerRadius:9).fill();label("重置「"+h.text+"」词频",in:r.insetBy(dx:5,dy:0),size:14,color:ink)}
         if let f=pressedCap,opt.bubbles,hints[f.id] != nil {
             let r=CGRect(x:min(max(0,f.box.midX-23),bounds.width-46),y:max(0,f.box.minY-28),width:46,height:48)
             face.setFill();UIBezierPath(roundedRect:r,cornerRadius:8).fill();label(f.face,in:r,size:28,color:ink)
         }
     }
+    var forgetBox:CGRect {CGRect(x:min(max(0,forgetPoint.x-78),max(0,bounds.width-156)),y:min(bounds.height-42,max(42,forgetPoint.y-42)),width:156,height:40)}
     func distance(_ c:Cap,_ p:CGPoint)->CGFloat {
         let dx=(c.box.midX-p.x)/max(1,c.box.width),dy=(c.box.midY-p.y)/max(1,c.box.height)
         return dx*dx+dy*dy
@@ -184,14 +187,16 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
         build()
         for t in touches.sorted(by:{$0.timestamp<$1.timestamp}) {
             if fingers.values.contains(where:{$0.cap.id=="space" && $0.moved}) {continue}
-            let p=t.location(in:self);guard let c=hit(p) else {continue}
+            let p=t.location(in:self)
+            if let h=forgetHit {forgetHit=nil;setNeedsDisplay();if forgetBox.contains(p) {owner?.forget(h);continue}}
+            guard let c=hit(p) else {continue}
             for f in fingers.values where !f.done && !f.moved { finish(f);f.timer?.invalidate() }
             let f=Finger(c,p);fingers[t]=f;feedback();stamp+=1;focusFinger=f;pressedCap=c;setNeedsDisplay()
             if c.id=="del" {
                 owner?.back(); repeatDelete(f,0.38)
             } else if c.id.hasPrefix("pick"),let i=Int(c.id.dropFirst(4)) {
                 f.timer=Timer.scheduledTimer(withTimeInterval:0.55,repeats:false){ [weak self,weak f] _ in
-                    guard let f,!f.done,!f.moved else{return};f.done=true;self?.owner?.forget(i)
+                    guard let self,let f,!f.done,!f.moved,let hits=self.owner?.hits,hits.indices.contains(i),hits[i].learned else{return};f.done=true;self.forgetHit=hits[i];self.forgetPoint=f.start;self.setNeedsDisplay()
                 }
             }
         }

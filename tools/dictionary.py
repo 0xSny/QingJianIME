@@ -103,6 +103,7 @@ def compile_dictionary():
     header = struct.pack("<4s9I",b"QJ17",1,zlib.crc32(payload),*map(len,sections),len(payload))
     (OUT/"lex.bin").write_bytes(header+payload)
     assert len(entries)>50000 and len(pairs)>1000
+    (OUT/"Credits.txt").write_text((ROOT/"NOTICE.md").read_text(encoding="utf8")+"\n\n".replace(chr(10), chr(10))+(ROOT/"LICENSE").read_text(encoding="utf8"),encoding="utf8")
     print(len(entries),"entries;",len(pairs),"transitions;",len(payload),"bytes")
 
 if __name__ == "__main__":

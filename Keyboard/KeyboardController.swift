@@ -124,7 +124,7 @@ final class KeyboardController: UIInputViewController {
     }
     func reset(){
         raw.removeAll();taps.removeAll();learnedText="";learnedReading="";hits=[];board.grid=false;board.offset=0
-        board.continuationMask=0;ticket=decoder?.invalidate() ?? 0;board.setNeedsDisplay()
+        board.forgetHit=nil;board.continuationMask=0;ticket=decoder?.invalidate() ?? 0;board.setNeedsDisplay()
     }
     func mark(_ s:String){
         updatingMark=true
@@ -181,11 +181,9 @@ final class KeyboardController: UIInputViewController {
             undoText=h.text;undoContext=textDocumentProxy.documentContextBeforeInput;reset()
         } else {mark(String(decoding:raw,as:UTF8.self));search()};board.setNeedsDisplay()
     }
-    func forget(_ i:Int){
-        guard hits.indices.contains(i),let d=decoder else{return}
-        let h=hits[i],popup=UIAlertController(title:h.text,message:nil,preferredStyle:.alert)
-        popup.addAction(UIAlertAction(title:"恢复默认词频",style:.destructive){[weak self] _ in self?.queue.async{d.erase(h.text,reading:h.reading)};self?.search()})
-        popup.addAction(UIAlertAction(title:"取消",style:.cancel));present(popup,animated:false)
+    func forget(_ h:QHit){
+        guard let d=decoder else{return}
+        queue.async{d.erase(h.text,reading:h.reading)};search()
     }
     func literal(_ s:String){
         if !raw.isEmpty {if !hits.isEmpty{pick(0)};if !raw.isEmpty {textDocumentProxy.unmarkText();reset()}}
