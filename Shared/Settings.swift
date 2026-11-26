@@ -4,6 +4,7 @@ import Darwin
 struct Options: Codable, Equatable {
     var fly = false, hints = 0, expanded = false, vibration = 2
     var sound = true, bubbles = true, swipe = true, doubleSpace = true, swipeDelete = true
+    var volume = 0.75
     var height = 268.0, hand = 0, fuzzy = 0, spatial = 1.0, cursor = 14.0
     var clipboard = false, appearance = 0, mixedSpace = false
     var phrases = [String:String]()
@@ -53,6 +54,7 @@ struct Controls: View {
             Section("手感") {
                 picker("触感", ["关闭","轻微","清脆","强劲"], $model.value.vibration)
                 Toggle("按键音", isOn: $model.value.sound)
+                if model.value.sound { Text("按键音量　\(Int(model.value.volume*100))%"); Slider(value: $model.value.volume, in: 0...1) }
                 Toggle("放大气泡", isOn: $model.value.bubbles)
                 Toggle("上滑输入副标", isOn: $model.value.swipe)
                 Toggle("左滑退格清空", isOn: $model.value.swipeDelete)

@@ -40,7 +40,7 @@ final class KeyboardController: UIInputViewController {
             let engine=QDecoder(lex:path,storage:dir.appendingPathComponent("learning.v1").path)
             DispatchQueue.main.async { self?.decoder=engine;self?.search() }
         }
-        board.haptic.prepare()
+        board.haptic.prepare();board.click.prepare()
     }
     func apply(_ v:Options) {
         let changed=options.fly != v.fly;options=v
@@ -51,13 +51,15 @@ final class KeyboardController: UIInputViewController {
     func refreshTheme() {
         guard let b=board else{return}
         let appearance=textDocumentProxy.keyboardAppearance
-        let traits=[b.window?.windowScene?.traitCollection.userInterfaceStyle,b.window?.traitCollection.userInterfaceStyle,b.traitCollection.userInterfaceStyle]
-        let style=traits.compactMap{$0}.first{$0 != .unspecified}
-        var dark=b.dark
-        if settings.value.appearance != 0 {dark=false}
-        else if appearance == .dark {dark=true}
-        else if appearance == .light {dark=false}
-        else if let style {dark=style == .dark}
+        func style(_ trait: UIUserInterfaceStyle?) -> PaletteStyle {
+            trait == .dark ? .dark : trait == .light ? .light : .unknown
+        }
+        let dark = Appearance.dark(forcedLight:settings.value.appearance != 0,
+            host:appearance == .dark ? .dark : appearance == .light ? .light : .unknown,
+            scene:style(b.window?.windowScene?.traitCollection.userInterfaceStyle),
+            window:style(b.window?.traitCollection.userInterfaceStyle),view:style(b.traitCollection.userInterfaceStyle),
+            attached:b.window != nil,previous:b.dark)
+        guard b.dark != dark || b.backgroundColor != b.base || panel != nil else {return}
         CATransaction.begin();CATransaction.setDisableActions(true)
         b.dark=dark;b.backgroundColor=b.base;b.setNeedsDisplay()
         panel?.overrideUserInterfaceStyle=dark ? .dark:.light

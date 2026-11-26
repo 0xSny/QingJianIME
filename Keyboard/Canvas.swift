@@ -12,15 +12,16 @@ final class Finger {
     var timer: Timer?
     init(_ c: Cap, _ p: CGPoint) { cap = c; start = p }
 }
-final class Canvas: UIInputView {
+final class Canvas: UIInputView, UIInputViewAudioFeedback {
     weak var owner: KeyboardController?
     var dark = false, mode = 0, upper = false, locked = false, grid = false
     var filter = 0, offset: CGFloat = 0, paste = false
     var caps = [Cap](), slots = [(Int,CGRect)](), fingers = [UITouch:Finger]()
     var focused: Cap?, stamp = 0, lastShift = 0.0
+    let click = KeyClick()
     let haptic = UIImpactFeedbackGenerator(style: .rigid)
     var opt: Options { owner?.settings.value ?? Options() }
-    override var enableInputClicksWhenVisible: Bool { true }
+    var enableInputClicksWhenVisible: Bool { true }
     let hints = ["q":"iu","w":"ei","e":"e","r":"uan","t":"ue üe","y":"un","u":"u","i":"i","o":"o uo","p":"ie","a":"a","s":"ong iong","d":"ai","f":"en","g":"eng","h":"ang","j":"an","k":"ing uai","l":"iang uang","z":"ou","x":"ia ua","c":"ao","v":"ui ü","b":"in","n":"iao","m":"ian"]
     let secondary = Dictionary(uniqueKeysWithValues: zip(Array("qwertyuiopasdfghjklzxcvbnm").map(String.init),Array("1234567890@#$%&*-+()!?，。；：").map(String.init)))
     var ink: UIColor { dark ? .white : UIColor(white: 0.12, alpha: 1) }
@@ -138,7 +139,7 @@ final class Canvas: UIInputView {
     }
     func feedback() {
         if opt.vibration>0 { haptic.impactOccurred(intensity:[0,0.3,0.65,1][opt.vibration]);haptic.prepare() }
-        if opt.sound { UIDevice.current.playInputClick() }
+        if opt.sound { click.play(volume:opt.volume) }
     }
     override func touchesBegan(_ touches:Set<UITouch>,with event:UIEvent?) {
         build()

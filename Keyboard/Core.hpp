@@ -12,9 +12,16 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <string_view>
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#include <io.h>
+#else
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 #include <vector>
 
 namespace qj {
@@ -31,7 +38,7 @@ struct Memory { double count,time; };
 inline double now() { return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count(); }
 inline double decayed(Memory m) { return m.count * std::exp2(-std::max(0.,now()-m.time)/2592000.); }
 class Engine {
-    void *mapping=MAP_FAILED; size_t size=0;
+    const void *mapping=nullptr; size_t size=0;
     const Sound *sounds=nullptr; const Node *nodes=nullptr; const Edge *edges=nullptr;
     const Word *words=nullptr; const Pair *pairs=nullptr; const char *pool=nullptr;
     unsigned ns=0,np=0;
@@ -46,21 +53,33 @@ class Engine {
         pending[k]=m;
         if(m.count>0.001) memory[k]=m; else memory.erase(k);
     }
-    double transition(unsigned a,unsigned b) const {
-        auto p=std::lower_bound(pairs,pairs+np,std::make_pair(a,b),[](Pair p,auto k){
-            return std::make_pair(p.left,p.right)<k;
+    double transition(std::string_view a,unsigned b) const {
+        auto p=std::lower_bound(pairs,pairs+np,std::make_pair(a,b),[this](Pair p,auto k){
+            return std::make_pair(std::string_view(pool+p.left),p.right)<k;
         });
-        return p!=pairs+np && p->left==a && p->right==b ? std::log1p(p->count):0.;
+        return p!=pairs+np && std::string_view(pool+p->left)==a && p->right==b ? std::log1p(p->count):0.;
     }
 public:
     std::atomic<uint64_t> generation{0};
     Engine(const char* lex,string path):file(std::move(path)) {
+        #ifdef _WIN32
+        HANDLE fd=CreateFileA(lex,GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(fd==INVALID_HANDLE_VALUE)return;
+        LARGE_INTEGER length;
+        if(GetFileSizeEx(fd,&length) && length.QuadPart>=sizeof(Header)){
+            size=length.QuadPart;
+            HANDLE section=CreateFileMappingA(fd,nullptr,PAGE_READONLY,0,0,nullptr);
+            if(section){mapping=MapViewOfFile(section,FILE_MAP_READ,0,0,0); CloseHandle(section);}
+        }
+        CloseHandle(fd);if(!mapping)return;
+#else
         int fd=open(lex,O_RDONLY); if(fd<0)return;
         struct stat st{}; if(fstat(fd,&st)==0 && st.st_size>=sizeof(Header)){
             size=st.st_size; mapping=mmap(nullptr,size,PROT_READ,MAP_PRIVATE,fd,0);
         }
-        close(fd); if(mapping==MAP_FAILED)return;
-        const auto& h=*static_cast<Header*>(mapping);
+        close(fd); if(mapping==MAP_FAILED){mapping=nullptr;return;} if(!mapping)return;
+#endif
+        const auto& h=*static_cast<const Header*>(mapping);
         uint64_t total=sizeof(Header); for(auto n:h.bytes)total+=n;
         if(memcmp(h.magic,"QJ17",4)||h.version!=1||total!=size||h.bytes[1]<sizeof(Node))return;
         auto p=static_cast<const char*>(mapping)+sizeof(Header);
@@ -79,7 +98,13 @@ public:
             }
         }
     }
-    ~Engine(){ if(mapping!=MAP_FAILED)munmap(mapping,size); }
+    ~Engine(){
+#ifdef _WIN32
+        if(mapping)UnmapViewOfFile(mapping);
+#else
+        if(mapping)munmap(const_cast<void*>(mapping),size);
+#endif
+    }
     void flush(){
         if(pending.empty())return;
         auto write=[](auto& out,const auto& data){
@@ -89,7 +114,7 @@ public:
         std::ofstream out(file+".log",std::ios::app);write(out,pending);out.flush();
         if(!out)return;pending.clear(); if(out.tellp()<131072)return;out.close();
         std::ofstream snap(file+".tmp");write(snap,memory);snap.close();
-        if(snap && rename((file+".tmp").c_str(),(file+".snapshot").c_str())==0)unlink((file+".log").c_str());
+        if(snap && rename((file+".tmp").c_str(),(file+".snapshot").c_str())==0)std::remove((file+".log").c_str());
     }
     void learn(string word,string reading,string prev,bool first){
         if(first)undo.clear();
@@ -128,6 +153,9 @@ public:
                 };
                 add(code,0);
                 if(code.size()>1)add(code.substr(0,1),5);
+                if(!fly && !code.empty() && code.size()>n-i && n-i>1 && code.compare(0,n-i,raw,i,n-i)==0)
+                    add(code.substr(0,n-i),6.5);
+                if(!fly && code.size()>2 && code[1]=='h')add(code.substr(0,2),4.7);
                 if(!fly){
                     if(code.size()>=3 && spatial>0){
                         auto alt=code;std::swap(alt[alt.size()-1],alt[alt.size()-2]);if(alt!=code)add(alt,5);
@@ -171,7 +199,7 @@ public:
                             if(!start)hits.push_back({word,read,m.end,base+weight("@"+previous+"\t"+word),m.end==n?(cost==0?1:2):3});
                             if(w>2)continue;
                             for(auto& path:paths){
-                                double sc=path.score+base+transition(path.last,item.text)+weight("@"+(start?string(pool+path.last):previous)+"\t"+word);
+                                double sc=path.score+base+transition(start?std::string_view(pool+path.last):std::string_view(previous),item.text)+weight("@"+(start?string(pool+path.last):previous)+"\t"+word);
                                 auto& destPaths=best[m.end];
                                 destPaths.push_back({path.text+word,path.reading+(start?" ":"")+read,sc,path.penalty+cost,item.text});
                                 if(destPaths.size()>16)prune(destPaths);

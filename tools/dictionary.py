@@ -95,9 +95,9 @@ def compile_dictionary():
             continue
         word = cols[1]
         if prev in offsets and word in offsets:
-            pairs[offsets[prev],offsets[word]] += 1
+            pairs[prev,offsets[word]] += 1
         prev = word
-    bigrams = b"".join(struct.pack("<III",a,b,c) for (a,b),c in sorted(pairs.items()))
+    bigrams = b"".join(struct.pack("<III",offsets[a],b,c) for (a,b),c in sorted(pairs.items()))
     sections = [syl,nodes,edges,words,bigrams,pool]
     payload = b"".join(sections)
     header = struct.pack("<4s9I",b"QJ17",1,zlib.crc32(payload),*map(len,sections),len(payload))

@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Compile and test dictionary
         run: |
+          swiftc Keyboard/Appearance.swift tests/appearance/main.swift -o /tmp/test-appearance
+          /tmp/test-appearance
           python3 tools/dictionary.py
           c++ -std=c++17 -O2 tests/engine.cpp -o /tmp/test-engine
           /tmp/test-engine
