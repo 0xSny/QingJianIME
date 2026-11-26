@@ -1,5 +1,9 @@
 import UIKit
 
+final class KeyElement: UIAccessibilityElement {
+    var action:(()->Void)?
+    override func accessibilityActivate()->Bool {action?();return action != nil}
+}
 struct Cap {
     let id: String
     let box: CGRect
@@ -97,6 +101,25 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
                 x+=width
             }
         }
+    }
+    override var accessibilityElements: [Any]? {
+        get {
+            build()
+            let entries=caps+slots.compactMap { i,r in
+                guard let h=owner?.hits, h.indices.contains(i) else{return nil}
+                return Cap(id:"pick"+String(i),box:r,face:h[i].text,sub:"")
+            }
+            return entries.map { cap in
+                let el=KeyElement(accessibilityContainer:self)
+                el.accessibilityLabel=cap.id=="settings" ? "键盘设置":cap.face
+                el.accessibilityIdentifier="qj."+cap.id
+                el.accessibilityTraits = .keyboardKey
+                el.accessibilityFrameInContainerSpace=cap.box
+                el.action={ [weak self] in self?.finish(Finger(cap,CGPoint(x:cap.box.midX,y:cap.box.midY))) }
+                return el
+            } + (subviews.filter{$0===owner?.children.first?.view} as [Any])
+        }
+        set {}
     }
     override func layoutSubviews(){super.layoutSubviews();build();setNeedsDisplay()}
     override func draw(_ rect:CGRect) {

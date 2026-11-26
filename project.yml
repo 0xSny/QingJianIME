@@ -36,7 +36,25 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Shared/Group.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: Keyboard/Bridge.h
         APPLICATION_EXTENSION_API_ONLY: YES
+  ReturnUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [tests/ReturnUI]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.custom.ime.tests
+        TEST_TARGET_NAME: QingJian
+    dependencies:
+      - target: QingJian
 schemes:
+  ReturnUI:
+    build:
+      targets:
+        QingJian: all
+        ReturnUITests: [test]
+    test:
+      targets: [ReturnUITests]
   QingJian:
     build:
       targets:
