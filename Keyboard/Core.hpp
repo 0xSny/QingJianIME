@@ -128,6 +128,16 @@ public:
     void rollback(){for(auto& [k,v]:undo)assign(k,v);undo.clear();}
     void erase(string word,string reading){assign(key(word,reading),{});undo.clear();}
     void clear(){auto copy=memory;for(auto& [k,v]:copy)assign(k,{});undo.clear();}
+    uint32_t continuations(const string& raw,bool fly)const {
+        if(!pool || raw.empty())return 0;
+        uint32_t mask=0;
+        for(unsigned sid=0;sid<ns;sid++){
+            std::string_view code(pool+(fly?sounds[sid].fly:sounds[sid].full));
+            for(size_t k=1;k<code.size() && k<=raw.size();k++)
+                if(raw.compare(raw.size()-k,k,code.data(),k)==0) mask|=1u<<(code[k]-'a');
+        }
+        return mask;
+    }
     size_t count()const{return std::count_if(memory.begin(),memory.end(),[](auto& x){return x.first[0]!='@';});}
     std::vector<Hit> decode(const string& raw,const std::vector<Tap>& taps,bool fly,int fuzzy,double spatial,string previous,uint64_t token){
         if(!pool || raw.empty() || raw.size()>256)return {};
@@ -158,7 +168,7 @@ public:
                 if(!fly && code.size()>2 && code[1]=='h')add(code.substr(0,2),4.7);
                 if(!fly){
                     if(code.size()>=3 && spatial>0){
-                        auto alt=code;std::swap(alt[alt.size()-1],alt[alt.size()-2]);if(alt!=code)add(alt,5);
+                        for(size_t j=1;j<code.size();j++){ auto alt=code;std::swap(alt[j-1],alt[j]);if(alt!=code)add(alt,5); }
                     }
                     for(unsigned g=0;g<11;g++)if(fuzzy&(1<<g)){
                         for(int rev=0;rev<2;rev++){
@@ -179,7 +189,7 @@ public:
         for(unsigned start=0;start<n;start++){
             if(generation!=token)return {};
             auto& paths=best[start];if(paths.empty())continue;
-            auto prune=[](auto& a){std::sort(a.begin(),a.end(),[](auto& x,auto& y){return x.score>y.score;});if(a.size()>4)a.resize(4);};
+            auto prune=[](auto& a){std::sort(a.begin(),a.end(),[](auto& x,auto& y){if((x.penalty==0)!=(y.penalty==0))return x.penalty==0;return x.score>y.score;});if(a.size()>4)a.resize(4);};
             prune(paths);
             struct Cursor{unsigned node,pos;double cost;};
             std::vector<Cursor> frontier{{0,start,0}};
@@ -195,11 +205,11 @@ public:
                         if(m.end<n && dest.count)next.push_back({edge->node,m.end,cost});
                         for(unsigned w=0;w<std::min(dest.words,12u);w++){
                             auto item=words[dest.word+w];string word=pool+item.text,read=pool+item.reading;
-                            double base=item.frequency*.46-7-cost+weight(key(word,read));
+                            double base=item.frequency*.50-12-cost+weight(key(word,read));
                             if(!start)hits.push_back({word,read,m.end,base+weight("@"+previous+"\t"+word),m.end==n?(cost==0?1:2):3});
                             if(w>2)continue;
                             for(auto& path:paths){
-                                double sc=path.score+base+transition(start?std::string_view(pool+path.last):std::string_view(previous),item.text)+weight("@"+(start?string(pool+path.last):previous)+"\t"+word);
+                                double sc=path.score+base-(start && cost>0 ? 2.0:0.0)+transition(start?std::string_view(pool+path.last):std::string_view(previous),item.text)+weight("@"+(start?string(pool+path.last):previous)+"\t"+word);
                                 auto& destPaths=best[m.end];
                                 destPaths.push_back({path.text+word,path.reading+(start?" ":"")+read,sc,path.penalty+cost,item.text});
                                 if(destPaths.size()>16)prune(destPaths);
@@ -211,7 +221,11 @@ public:
                 if(next.size()>24)next.resize(24);frontier.swap(next);
             }
         }
-        for(auto& p:best[n])hits.push_back({p.text,p.reading,n,p.score,p.penalty==0?0:2});
+        auto& complete=best[n];
+        std::sort(complete.begin(),complete.end(),[](const Path& a,const Path& b){
+            if((a.penalty==0)!=(b.penalty==0))return a.penalty==0;return a.score>b.score;
+        });
+        for(size_t i=0;i<complete.size();++i){auto& p=complete[i];hits.push_back({p.text,p.reading,n,p.score,i==0 && p.penalty==0?0:2});}
         for(auto& [k,mem]:memory){
             if(generation!=token)return {};
             if(k.front()=='@')continue;

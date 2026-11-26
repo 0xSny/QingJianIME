@@ -19,7 +19,7 @@ for target,identifier,kind in [(app,"com.custom.ime","APPL"),(ext,"com.custom.im
     pl=plistlib.loads(info.read_bytes())
     for k,v in dict(CFBundleIdentifier=identifier,CFBundlePackageType=kind,CFBundleVersion=build,CFBundleShortVersionString=version,MinimumOSVersion="16.0").items():
         assert pl[k]==v,(k,pl[k],v)
-    subprocess.run(["lipo","-verify_arch","arm64",target/pl["CFBundleExecutable"]],check=True)
+    subprocess.run(["lipo",target/pl["CFBundleExecutable"],"-verify_arch","arm64"],check=True)
     assert "$(" not in str(pl)
 lex=(ext/"lex.bin").read_bytes()
 assert lex[:4]==b"QJ17" and len(lex)>1000000 and struct.unpack_from("<II",lex,4)==(1,zlib.crc32(lex[40:]))

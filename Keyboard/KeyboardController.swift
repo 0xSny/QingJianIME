@@ -124,7 +124,7 @@ final class KeyboardController: UIInputViewController {
     }
     func reset(){
         raw.removeAll();taps.removeAll();learnedText="";learnedReading="";hits=[];board.grid=false;board.offset=0
-        ticket=decoder?.invalidate() ?? 0;board.setNeedsDisplay()
+        board.continuationMask=0;ticket=decoder?.invalidate() ?? 0;board.setNeedsDisplay()
     }
     func mark(_ s:String){
         updatingMark=true
@@ -144,9 +144,11 @@ final class KeyboardController: UIInputViewController {
         guard !raw.isEmpty else{return}
         let input=raw,touch=taps,o=settings.value,prev=previous
         queue.async {
+            let nextLetters=d.continuations(input,fly:o.fly)
             let result=d.search(input,touches:touch,fly:o.fly,fuzzy:Int32(o.fuzzy),spatial:o.spatial,previous:prev,token:t)
             DispatchQueue.main.async { [weak self] in
                 guard let self,self.ticket==t else{return}
+                self.board.continuationMask=nextLetters
                 self.hits=result
                 let code=String(decoding:input,as:UTF8.self)
                 if let phrase=o.phrases[code] {let h=QHit();h.text=phrase;h.reading="";h.used=UInt(input.count);self.hits.insert(h,at:0)}

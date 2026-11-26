@@ -27,5 +27,6 @@
 -(void)rollback { _engine->rollback(); }
 -(void)flush { _engine->flush(); }
 -(void)clear { _engine->clear(); }
+-(uint32_t)continuations:(NSData*)input fly:(BOOL)fly { return input.length?_engine->continuations(std::string((const char*)input.bytes,input.length),fly):0; }
 -(NSUInteger)count { return _engine->count(); }
 @end

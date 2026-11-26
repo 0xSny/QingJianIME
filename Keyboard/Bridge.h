@@ -15,6 +15,7 @@ NS_ASSUME_NONNULL_BEGIN
 -(void)rollback;
 -(void)flush;
 -(void)clear;
+-(uint32_t)continuations:(NSData*)input fly:(BOOL)fly;
 -(NSUInteger)count;
 @end
 NS_ASSUME_NONNULL_END

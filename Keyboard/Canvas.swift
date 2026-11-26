@@ -14,6 +14,7 @@ final class Finger {
 }
 final class Canvas: UIInputView, UIInputViewAudioFeedback {
     weak var owner: KeyboardController?
+    var continuationMask:UInt32=0
     var dark = false, mode = 0, upper = false, locked = false, grid = false
     var filter = 0, gridPage = 0, latinPunctuation = false, offset: CGFloat = 0, paste = false
     var caps = [Cap](), slots = [(Int,CGRect)](), fingers = [UITouch:Finger]()
@@ -134,7 +135,15 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
     }
     func hit(_ p:CGPoint)->Cap? {
         if let (i,r)=slots.first(where:{$0.1.contains(p)}) {return Cap(id:"pick"+String(i),box:r,face:"",sub:"")}
-        if let c=caps.first(where:{$0.box.contains(p)}){return c}
+        if let c=caps.first(where:{$0.box.contains(p)}),hints[c.id]==nil || mode>1 {return c}
+        if p.y>=42,mode<=1 {
+            func adjusted(_ c:Cap)->CGFloat {
+                let d=distance(c,p)
+                guard mode==0, opt.spatial>0, let b=c.id.utf8.first,(97...122).contains(b),continuationMask & (1 << (b-97)) != 0 else{return d}
+                return d*(opt.fly ? 0.98:0.95)
+            }
+            return caps.filter{hints[$0.id] != nil}.min{adjusted($0)<adjusted($1)}
+        }
         return caps.filter{$0.box.minY>0}.min { distance($0,p)<distance($1,p) }
     }
     func feedback() {
