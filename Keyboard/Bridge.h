@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import "../Shared/Notify.h"
 NS_ASSUME_NONNULL_BEGIN
 @interface QHit : NSObject
 @property(nonatomic,copy) NSString *text;

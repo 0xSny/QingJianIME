@@ -10,7 +10,9 @@ final class KeyboardController: UIInputViewController {
     private var options = Options()
     private var raw = Data(), taps = Data(), previous = "", learnedText = "", learnedReading = ""
     private var undoText = "", undoContext: String?, lastSpace = 0.0
-    private var document: UUID?, editing = false, expectedContext: String?
+    private var document: UUID?, updatingMark = false, expectedContext: String?
+    private static var lastDark = false
+    private var confirmLight: DispatchWorkItem?
     private var board: Canvas!, panel: UIHostingController<AnyView>?
     private var clipboardVersion = -1
     var hits = [QHit]()
@@ -21,6 +23,7 @@ final class KeyboardController: UIInputViewController {
     }
     override func loadView() {
         board=Canvas(frame:.zero,inputViewStyle:.keyboard);board.allowsSelfSizing=true
+        board.dark=Self.lastDark;board.backgroundColor=board.base
         board.isMultipleTouchEnabled=true;board.owner=self;board.isOpaque=true
         self.inputView=board
     }
@@ -38,17 +41,18 @@ final class KeyboardController: UIInputViewController {
         queue.async { [weak self] in
             try? FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
             let engine=QDecoder(lex:path,storage:dir.appendingPathComponent("learning.v1").path)
-            DispatchQueue.main.async { self?.decoder=engine;self?.search() }
+            DispatchQueue.main.async { self?.decoder=engine;self?.applyLearningReset();self?.search() }
         }
         board.haptic.prepare();board.click.prepare()
     }
     func apply(_ v:Options) {
         let changed=options.fly != v.fly;options=v
+        applyLearningReset()
         if changed {cancelComposition()}
         heightRule?.constant=v.height;board.setNeedsLayout();refreshTheme();search()
     }
     @objc func resumeTheme(){refreshTheme();DispatchQueue.main.async { [weak self] in self?.refreshTheme() }}
-    func refreshTheme() {
+    func refreshTheme(confirmed: Bool = false) {
         guard let b=board else{return}
         let appearance=textDocumentProxy.keyboardAppearance
         func style(_ trait: UIUserInterfaceStyle?) -> PaletteStyle {
@@ -59,6 +63,15 @@ final class KeyboardController: UIInputViewController {
             scene:style(b.window?.windowScene?.traitCollection.userInterfaceStyle),
             window:style(b.window?.traitCollection.userInterfaceStyle),view:style(b.traitCollection.userInterfaceStyle),
             attached:b.window != nil,previous:b.dark)
+        if b.dark && !dark && settings.value.appearance == 0 && !confirmed {
+            if confirmLight == nil {
+                let check=DispatchWorkItem { [weak self] in self?.confirmLight=nil;self?.refreshTheme(confirmed:true) }
+                confirmLight=check;DispatchQueue.main.asyncAfter(deadline:.now()+0.035,execute:check)
+            }
+            return
+        }
+        confirmLight?.cancel();confirmLight=nil
+        Self.lastDark=dark
         guard b.dark != dark || b.backgroundColor != b.base || panel != nil else {return}
         CATransaction.begin();CATransaction.setDisableActions(true)
         b.dark=dark;b.backgroundColor=b.base;b.setNeedsDisplay()
@@ -66,10 +79,10 @@ final class KeyboardController: UIInputViewController {
         CATransaction.commit()
     }
     override func traitCollectionDidChange(_ previousTraitCollection:UITraitCollection?){super.traitCollectionDidChange(previousTraitCollection);refreshTheme()}
-    override func viewWillAppear(_ animated:Bool){super.viewWillAppear(animated);settings.reload();resumeTheme()}
+    override func viewWillAppear(_ animated:Bool){super.viewWillAppear(animated);settings.reload();resumeTheme();checkClipboard()}
     override func viewDidAppear(_ animated:Bool){super.viewDidAppear(animated);resumeTheme();checkClipboard()}
     override func viewDidLayoutSubviews(){super.viewDidLayoutSubviews();panel?.view.frame=board.bounds.inset(by:UIEdgeInsets(top:42,left:0,bottom:0,right:0));refreshTheme()}
-    override func viewWillDisappear(_ animated:Bool){super.viewWillDisappear(animated);board.stop();if let d=decoder{queue.async{d.flush()}}}
+    override func viewWillDisappear(_ animated:Bool){super.viewWillDisappear(animated);board.stop();if let d=decoder{queue.async{d.flush();let n=Int(d.count());DispatchQueue.main.async { [weak self] in self?.settings.report(n) }}}}
     override func textWillChange(_ textInput:UITextInput?){super.textWillChange(textInput);refreshTheme()}
     override func textDidChange(_ textInput:UITextInput?){
         super.textDidChange(textInput);resumeTheme()
@@ -79,10 +92,10 @@ final class KeyboardController: UIInputViewController {
     }
     override func selectionDidChange(_ textInput:UITextInput?){
         super.selectionDidChange(textInput)
-        if !editing && !raw.isEmpty && expectedContext != textDocumentProxy.documentContextBeforeInput {textDocumentProxy.unmarkText();reset()}
+        if !updatingMark && !raw.isEmpty && expectedContext != textDocumentProxy.documentContextBeforeInput {textDocumentProxy.unmarkText();reset()}
     }
     func checkClipboard(){
-        guard settings.value.clipboard,hasFullAccess else{board.paste=false;return}
+        guard settings.value.clipboard,hasFullAccess else{board.paste=false;board.setNeedsDisplay();return}
         let p=UIPasteboard.general
         guard p.changeCount != clipboardVersion,p.hasStrings else{return}
         clipboardVersion=p.changeCount;board.paste=true;board.setNeedsDisplay()
@@ -95,10 +108,17 @@ final class KeyboardController: UIInputViewController {
         guard let d=decoder else{return}
         queue.async {let n=Int(d.count());DispatchQueue.main.async { [weak self] in self?.showPanel(n) }}
     }
+    func applyLearningReset(){
+        let serial=settings.value.resetSerial
+        guard let d=decoder,serial>UserDefaults.standard.integer(forKey:"learning.reset") else{return}
+        queue.async {d.clear();d.flush();DispatchQueue.main.async { [weak self] in
+            UserDefaults.standard.set(serial,forKey:"learning.reset");self?.settings.report(0)
+        }}
+    }
     func showPanel(_ count:Int){
         guard panel==nil else{return}
         let ui=Controls(model:settings,extensionMode:true,learned:count,clear:{[weak self] in
-            guard let self,let d=self.decoder else{return};self.queue.async{d.clear();d.flush()};self.drawer()
+            guard let self,let d=self.decoder else{return};self.queue.async{d.clear();d.flush()};self.settings.report(0);self.drawer()
         })
         let p=UIHostingController(rootView:AnyView(ui));panel=p;addChild(p);board.addSubview(p.view);p.didMove(toParent:self);board.setNeedsLayout();refreshTheme()
     }
@@ -107,9 +127,9 @@ final class KeyboardController: UIInputViewController {
         ticket=decoder?.invalidate() ?? 0;board.setNeedsDisplay()
     }
     func mark(_ s:String){
-        editing=true
+        updatingMark=true
         textDocumentProxy.setMarkedText(s,selectedRange:NSRange(location:s.utf16.count,length:0))
-        expectedContext=textDocumentProxy.documentContextBeforeInput;editing=false
+        expectedContext=textDocumentProxy.documentContextBeforeInput;updatingMark=false
     }
     func cancelComposition(){if !raw.isEmpty {mark("");textDocumentProxy.unmarkText()};reset()}
     func letter(_ s:String,_ near:[UInt8]){
@@ -129,7 +149,7 @@ final class KeyboardController: UIInputViewController {
                 guard let self,self.ticket==t else{return}
                 self.hits=result
                 let code=String(decoding:input,as:UTF8.self)
-                if let phrase=o.phrases[code] {let h=QHit();h.text=phrase;h.reading="";h.used=input.count;self.hits.insert(h,at:0)}
+                if let phrase=o.phrases[code] {let h=QHit();h.text=phrase;h.reading="";h.used=UInt(input.count);self.hits.insert(h,at:0)}
                 if let h=result.first,h.used==input.count,!h.reading.isEmpty {
                     if o.fly && o.expanded || !o.fly && h.reading.replacingOccurrences(of:" ",with:"")==code {self.mark(h.reading)}
                 }
@@ -166,7 +186,7 @@ final class KeyboardController: UIInputViewController {
         undoText="";let prev=textDocumentProxy.documentContextBeforeInput?.last
         let gap=settings.value.mixedSpace && (prev?.unicodeScalars.first?.value ?? 0)>=0x4e00 && s.first?.isASCII==true && s.first?.isLetter==true
         textDocumentProxy.insertText((gap ? " ":"")+s)
-        if ["「」","『』","《》","“”","（）","【】"].contains(s){cursor(-1)}
+        if ["「」","『』","《》","“”","（）","【】","()","[]","{}","<>"].contains(s){cursor(-1)}
         previous=""
     }
     func enter(){if !raw.isEmpty {if !hits.isEmpty {pick(0)}else{textDocumentProxy.unmarkText();reset()}}else{literal("\n")}}

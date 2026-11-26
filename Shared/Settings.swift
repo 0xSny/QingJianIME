@@ -4,6 +4,7 @@ import Darwin
 struct Options: Codable, Equatable {
     var fly = false, hints = 0, expanded = false, vibration = 2
     var sound = true, bubbles = true, swipe = true, doubleSpace = true, swipeDelete = true
+    var resetSerial = 0
     var volume = 0.75
     var height = 268.0, hand = 0, fuzzy = 0, spatial = 1.0, cursor = 14.0
     var clipboard = false, appearance = 0, mixedSpace = false
@@ -21,6 +22,11 @@ final class Settings: ObservableObject {
             if shared { db.synchronize(); notify_post(Self.signal) }
         }
     }
+    @Published private(set) var learned = 0
+    func report(_ n: Int) {
+        guard db.integer(forKey:"learned.count") != n else {return}
+        learned=n;db.set(n,forKey:"learned.count");if shared {db.synchronize();notify_post(Self.signal)}
+    }
     private var token: Int32 = 0
     private var loading = false
     init() {
@@ -29,7 +35,14 @@ final class Settings: ObservableObject {
     }
     deinit { if shared { notify_cancel(token) } }
     func reload() {
-        guard let d = db.data(forKey: "options.v1"), let v = try? JSONDecoder().decode(Options.self, from: d), v != value else { return }
+        let n=db.integer(forKey:"learned.count"); if n != learned {learned=n}
+        guard let d=db.data(forKey:"options.v1"),
+              let saved=try? JSONSerialization.jsonObject(with:d) as? [String:Any],
+              let defaults=try? JSONEncoder().encode(Options()),
+              var fields=try? JSONSerialization.jsonObject(with:defaults) as? [String:Any] else{return}
+        fields.merge(saved){_,new in new}
+        guard let data=try? JSONSerialization.data(withJSONObject:fields),
+              let v=try? JSONDecoder().decode(Options.self,from:data),v != value else{return}
         loading = true; value = v; loading = false
     }
 }
@@ -38,10 +51,12 @@ struct Controls: View {
     var extensionMode = false
     var learned = 0
     var clear: (() -> Void)?
-    @State private var code = "", phrase = "", confirm = false
+    @State private var code = ""
+    @State private var phrase = ""
+    @State private var confirm = false
     let groups = ["zh/z","ch/c","sh/s","n/l","f/h","l/r","an/ang","en/eng","in/ing","ian/iang","uan/uang"]
     func picker(_ title: String, _ labels: [String], _ selection: Binding<Int>) -> some View {
-        Picker(title, selection: selection) { ForEach(labels.indices, id: \.self) { Text(labels[$0]).tag($0) } }
+        Picker(title, selection: selection) { ForEach(labels.indices, id: \.self) { Text(labels[$0]).tag($0) } }.pickerStyle(.menu)
     }
     var body: some View {
         Form {

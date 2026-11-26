@@ -15,9 +15,9 @@ final class Finger {
 final class Canvas: UIInputView, UIInputViewAudioFeedback {
     weak var owner: KeyboardController?
     var dark = false, mode = 0, upper = false, locked = false, grid = false
-    var filter = 0, offset: CGFloat = 0, paste = false
+    var filter = 0, gridPage = 0, latinPunctuation = false, offset: CGFloat = 0, paste = false
     var caps = [Cap](), slots = [(Int,CGRect)](), fingers = [UITouch:Finger]()
-    var focused: Cap?, stamp = 0, lastShift = 0.0
+    var pressedCap: Cap?, stamp = 0, lastShift = 0.0
     let click = KeyClick()
     let haptic = UIImpactFeedbackGenerator(style: .rigid)
     var opt: Options { owner?.settings.value ?? Options() }
@@ -28,7 +28,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
     var base: UIColor { UIColor(white: dark ? 0.12 : opt.appearance == 2 ? 0.96 : 0.86, alpha: 1) }
     var face: UIColor { UIColor(white: dark ? 0.28 : 1, alpha: 1) }
     override func didMoveToWindow() { super.didMoveToWindow(); owner?.refreshTheme(); if window == nil { stop() } }
-    func stop() { fingers.values.forEach { $0.timer?.invalidate() }; fingers.removeAll(); focused = nil; setNeedsDisplay() }
+    func stop() { fingers.values.forEach { $0.timer?.invalidate() }; fingers.removeAll(); pressedCap = nil; setNeedsDisplay() }
     func label(_ s: String, in r: CGRect, size: CGFloat, color: UIColor, bold: Bool = false) {
         let font = UIFont.systemFont(ofSize: max(5,size), weight: bold ? .medium : .regular)
         let attrs: [NSAttributedString.Key:Any] = [.font:font,.foregroundColor:color]
@@ -51,7 +51,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
         cap("settings","⚙",0,0,36,top)
         cap("expand",grid ? "⌄":"⌃",w-34,0,34,top)
         let right = w-34-(paste ? 52:0)
-        if paste { cap("paste","粘贴",right,0,52,top) }
+        if paste { cap("paste","粘贴",right,0,35,top);cap("dismissPaste","×",right+35,0,17,top) }
         let items = owner?.hits ?? []
         if !items.isEmpty {
             let span=max(1,right-36)
@@ -67,7 +67,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
         } else { cap("scheme", opt.fly ? "小鹤双拼":"全拼",36,0,max(1,right-36),top) }
         if grid {
             let all = items.indices.filter { filter==0 || items[$0].text.count==filter }
-            let start = min(max(0,Int(offset/48)),max(0,all.count-12))
+            let start = min(max(0,gridPage*12),max(0,all.count-12))
             for (k,i) in all.dropFirst(start).prefix(12).enumerated() {
                 cap("pick"+String(i),items[i].text,CGFloat(k%4)*w/4,top+CGFloat(k/4)*h,w/4,h)
             }
@@ -77,10 +77,10 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
         let alpha = mode<=1
         var rows = alpha ? ["q w e r t y u i o p","a s d f g h j k l","shift z x c v b n m del"] :
             mode==2 ? ["+ 1 2 3 ¥","− 4 5 6 :","× 7 8 9 del"] :
-            mode==3 ? ["， 。 ！ ？ 、 ： ； …","「」 『』 《》 “” （） 【】","@ # % & _ / del"] :
+            mode==3 ? (latinPunctuation ? [". , ! ? : ; @ #","() [] {} <> / &","% _ + - = .cn del"] : ["， 。 ！ ？ 、 ： ； …","「」 『』 《》 “” （） 【】","@ # % & _ / del"]) :
             ["😀 😂 😊 🥰 😎 👍","🎉 ❤️ 👌 🙏 ✨ 🌙","🙂 🤔 🥳 👏 💪 🌸 del"]
-        rows.append(alpha ? "num sym lang globe space ' delret" : mode==2 ? "abc sym 0 . space delret" : "abc num emoji globe space delret")
-        let titles=["shift":locked ? "⇪":"⇧","del":"⌫","space":"空格","lang":mode==1 ? "英/中":"中/英","globe":"◎","delret":owner?.returnTitle ?? "换行","num":"123","sym":"符","abc":"返回","emoji":"☺"]
+        rows.append(alpha ? "num sym lang globe space ' delret" : mode==2 ? "abc sym 0 . space delret" : (mode==3 ? "abc num punctuation emoji space delret":"abc num sym globe space delret"))
+        let titles=["shift":locked ? "⇪":"⇧","del":"⌫","space":"空格","lang":mode==1 ? "英/中":"中/英","globe":"◎","delret":owner?.returnTitle ?? "换行","num":"123","sym":"符","abc":"返回","emoji":"☺","punctuation":latinPunctuation ? "英文":"中文"]
         for (j,row) in rows.enumerated() {
             let keys=row.split(separator:" ").map(String.init)
             let inset:CGFloat = alpha && j==1 ? area/20 : 0
@@ -107,7 +107,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
             var r=b.insetBy(dx:2,dy:3)
             r.origin.x=(r.minX*scale).rounded()/scale; r.origin.y=(r.minY*scale).rounded()/scale
             UIColor(white:0,alpha:0.25).setFill();UIBezierPath(roundedRect:r.offsetBy(dx:0,dy:1),cornerRadius:5).fill()
-            (focused?.id==cap.id ? UIColor.systemGray : cap.id=="delret" ? UIColor(red:0.29,green:0.49,blue:0.72,alpha:1) : face).setFill()
+            (pressedCap?.id==cap.id ? UIColor.systemGray : cap.id=="delret" ? UIColor(red:0.29,green:0.49,blue:0.72,alpha:1) : face).setFill()
             UIBezierPath(roundedRect:r,cornerRadius:5).fill()
             let has = !cap.sub.isEmpty
             let primary=has ? CGRect(x:r.minX+3,y:r.minY,width:r.width-6,height:r.height*0.55):r
@@ -123,7 +123,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
             label(owner!.hits[i].text,in:r,size:18,color:ink)
             ink.withAlphaComponent(0.14).setFill();UIRectFill(CGRect(x:r.maxX-1/scale,y:10,width:1/scale,height:22))
         }
-        if let f=focused,opt.bubbles,hints[f.id] != nil {
+        if let f=pressedCap,opt.bubbles,hints[f.id] != nil {
             let r=CGRect(x:min(max(0,f.box.midX-23),bounds.width-46),y:max(0,f.box.minY-28),width:46,height:48)
             face.setFill();UIBezierPath(roundedRect:r,cornerRadius:8).fill();label(f.face,in:r,size:28,color:ink)
         }
@@ -144,9 +144,10 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
     override func touchesBegan(_ touches:Set<UITouch>,with event:UIEvent?) {
         build()
         for t in touches.sorted(by:{$0.timestamp<$1.timestamp}) {
+            if fingers.values.contains(where:{$0.cap.id=="space" && $0.moved}) {continue}
             let p=t.location(in:self);guard let c=hit(p) else {continue}
             for f in fingers.values where !f.done && !f.moved { finish(f);f.timer?.invalidate() }
-            let f=Finger(c,p);fingers[t]=f;feedback();stamp+=1;focused=c;setNeedsDisplay()
+            let f=Finger(c,p);fingers[t]=f;feedback();stamp+=1;pressedCap=c;setNeedsDisplay()
             if c.id=="del" {
                 owner?.back(); repeatDelete(f,0.38)
             } else if c.id.hasPrefix("pick"),let i=Int(c.id.dropFirst(4)) {
@@ -179,12 +180,14 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
         guard !f.done,!f.moved else{return};f.done=true
         let id=f.cap.id
         if id.hasPrefix("pick"),let i=Int(id.dropFirst(4)){owner?.pick(i);return}
-        if id.hasPrefix("filter"),let i=Int(id.dropFirst(6)){if i<4{filter=i;offset=0}else{offset += i==4 ? -576:576};setNeedsDisplay();return}
+        if id.hasPrefix("filter"),let i=Int(id.dropFirst(6)){if i<4{filter=i;gridPage=0}else{let count=(owner?.hits ?? []).filter{filter==0 || $0.text.count==filter}.count;gridPage=min(max(0,(count-1)/12),max(0,gridPage+(i==4 ? -1:1)))};setNeedsDisplay();return}
         switch id {
         case "del": break
         case "settings": owner?.drawer()
         case "scheme": owner?.settings.value.fly.toggle()
-        case "expand":grid.toggle();offset=0
+        case "expand":grid.toggle();gridPage=0;offset=0
+        case "punctuation":latinPunctuation.toggle()
+        case "dismissPaste":paste=false
         case "paste":owner?.pasteText()
         case "space":owner?.space()
         case "delret":owner?.enter()
@@ -207,7 +210,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
     func release(_ touches:Set<UITouch>,commit:Bool){
         for t in touches {guard let f=fingers.removeValue(forKey:t) else{continue};f.timer?.invalidate();if commit {finish(f)}
             if fingers.isEmpty {let mark=stamp;DispatchQueue.main.asyncAfter(deadline:.now()+max(0,0.035-CACurrentMediaTime()+f.time)){[weak self] in
-                guard let self,self.stamp==mark else{return};self.focused=nil;self.setNeedsDisplay()
+                guard let self,self.stamp==mark else{return};self.pressedCap=nil;self.setNeedsDisplay()
             }}
         }
     }
