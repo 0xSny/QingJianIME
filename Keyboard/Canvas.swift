@@ -22,6 +22,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
     var dark = false, mode = 0, upper = false, locked = false, grid = false
     var filter = 0, gridPage = 0, latinPunctuation = false, offset: CGFloat = 0, paste = false
     var caps = [Cap](), slots = [(Int,CGRect)](), fingers = [UITouch:Finger]()
+    weak var focusFinger: Finger?
     var pressedCap: Cap?, stamp = 0, lastShift = 0.0
     let click = KeyClick()
     let haptic = UIImpactFeedbackGenerator(style: .rigid)
@@ -105,19 +106,23 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
     override var accessibilityElements: [Any]? {
         get {
             build()
-            let entries=caps+slots.compactMap { i,r in
-                guard let h=owner?.hits, h.indices.contains(i) else{return nil}
-                return Cap(id:"pick"+String(i),box:r,face:h[i].text,sub:"")
+            var entries=caps
+            if let h=owner?.hits {
+                for (i,r) in slots where h.indices.contains(i) {entries.append(Cap(id:"pick"+String(i),box:r,face:h[i].text,sub:""))}
             }
-            return entries.map { cap in
+            var accessible=[Any]()
+            let panel=owner?.children.first?.viewIfLoaded
+            for cap in entries where panel==nil || cap.id=="settings" {
                 let el=KeyElement(accessibilityContainer:self)
                 el.accessibilityLabel=cap.id=="settings" ? "键盘设置":cap.face
                 el.accessibilityIdentifier="qj."+cap.id
                 el.accessibilityTraits = .keyboardKey
                 el.accessibilityFrameInContainerSpace=cap.box
-                el.action={ [weak self] in self?.finish(Finger(cap,CGPoint(x:cap.box.midX,y:cap.box.midY))) }
-                return el
-            } + (subviews.filter{$0===owner?.children.first?.view} as [Any])
+                el.action={ [weak self] in if cap.id=="del" {self?.owner?.back();return};self?.finish(Finger(cap,CGPoint(x:cap.box.midX,y:cap.box.midY))) }
+                accessible.append(el)
+            }
+            if let panel {accessible.append(panel)}
+            return accessible
         }
         set {}
     }
@@ -133,6 +138,8 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
             UIColor(white:0,alpha:0.25).setFill();UIBezierPath(roundedRect:r.offsetBy(dx:0,dy:1),cornerRadius:5).fill()
             (pressedCap?.id==cap.id ? UIColor.systemGray : cap.id=="delret" ? UIColor(red:0.29,green:0.49,blue:0.72,alpha:1) : face).setFill()
             UIBezierPath(roundedRect:r,cornerRadius:5).fill()
+            UIColor.white.withAlphaComponent(dark ? 0.1:0.8).setFill()
+            UIRectFill(CGRect(x:r.minX+5,y:r.minY,width:max(0,r.width-10),height:1/scale))
             let has = !cap.sub.isEmpty
             let primary=has ? CGRect(x:r.minX+3,y:r.minY,width:r.width-6,height:r.height*0.55):r
             label(cap.face,in:primary,size:cap.face.count==1 ? (has ? 19:22):16,color:cap.id=="delret" ? .white:ink)
@@ -179,7 +186,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
             if fingers.values.contains(where:{$0.cap.id=="space" && $0.moved}) {continue}
             let p=t.location(in:self);guard let c=hit(p) else {continue}
             for f in fingers.values where !f.done && !f.moved { finish(f);f.timer?.invalidate() }
-            let f=Finger(c,p);fingers[t]=f;feedback();stamp+=1;pressedCap=c;setNeedsDisplay()
+            let f=Finger(c,p);fingers[t]=f;feedback();stamp+=1;focusFinger=f;pressedCap=c;setNeedsDisplay()
             if c.id=="del" {
                 owner?.back(); repeatDelete(f,0.38)
             } else if c.id.hasPrefix("pick"),let i=Int(c.id.dropFirst(4)) {
@@ -217,7 +224,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
         case "del": break
         case "settings": owner?.drawer()
         case "scheme": owner?.settings.value.fly.toggle()
-        case "expand":grid.toggle();gridPage=0;offset=0
+        case "expand":if !(owner?.hits.isEmpty ?? true) || grid {grid.toggle()};gridPage=0;offset=0
         case "punctuation":latinPunctuation.toggle()
         case "dismissPaste":paste=false
         case "paste":owner?.pasteText()
@@ -232,8 +239,14 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
         default:
             if mode==0 && (hints[id] != nil || id=="'") {
                 let nearby=caps.filter{hints[$0.id] != nil}.sorted{distance($0,f.start)<distance($1,f.start)}.prefix(3)
-                let nearest=nearby.first.map{distance($0,f.start)} ?? 0
-                let costs=nearby.map{UInt8(min(255,max(0,(distance($0,f.start)-nearest)*(opt.fly ? 80:36))))}
+                // Relative negative log likelihood of an anisotropic Gaussian, quantized in twelfths.
+                func energy(_ c:Cap)->CGFloat {
+                    let sx=c.box.width*(opt.fly ? 0.29:0.40),sy=c.box.height*(opt.fly ? 0.28:0.35)
+                    let dx=(f.start.x-c.box.midX)/max(1,sx),dy=(f.start.y-c.box.midY)/max(1,sy)
+                    return (dx*dx+dy*dy)/2
+                }
+                let energies=nearby.map(energy),nearest=energies.min() ?? 0
+                let costs=energies.map{UInt8(min(255,max(0,($0-nearest)*12)))}
                 owner?.letter(id,Array(nearby.compactMap{$0.id.utf8.first})+costs)
             } else {owner?.literal(mode==1 && upper ? id.uppercased():id);if !locked {upper=false}}
         }
@@ -241,7 +254,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
     }
     func release(_ touches:Set<UITouch>,commit:Bool){
         for t in touches {guard let f=fingers.removeValue(forKey:t) else{continue};f.timer?.invalidate();if commit {finish(f)}
-            if fingers.isEmpty {let mark=stamp;DispatchQueue.main.asyncAfter(deadline:.now()+max(0,0.035-CACurrentMediaTime()+f.time)){[weak self] in
+            if focusFinger===f {let mark=stamp;DispatchQueue.main.asyncAfter(deadline:.now()+max(0,0.035-CACurrentMediaTime()+f.time)){[weak self] in
                 guard let self,self.stamp==mark else{return};self.pressedCap=nil;self.setNeedsDisplay()
             }}
         }

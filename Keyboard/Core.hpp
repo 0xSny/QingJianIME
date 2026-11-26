@@ -186,6 +186,7 @@ public:
         struct Path{string text,reading;double score=0,penalty=0;unsigned last=0;};
         std::vector<std::vector<Path>> best(n+1);best[0].push_back({});
         std::vector<Hit> hits;
+        std::set<unsigned> predictedNodes;
         for(unsigned start=0;start<n;start++){
             if(generation!=token)return {};
             auto& paths=best[start];if(paths.empty())continue;
@@ -202,6 +203,15 @@ public:
                         auto edge=std::lower_bound(edges+nd.edge,edges+nd.edge+nd.count,m.sid,[](Edge e,unsigned s){return e.sound<s;});
                         if(edge==edges+nd.edge+nd.count||edge->sound!=m.sid)continue;
                         auto& dest=nodes[edge->node];double cost=c.cost+m.penalty;
+                        if(!start && m.end==n && cost==0 && dest.count && predictedNodes.insert(edge->node).second){
+                            for(unsigned child=dest.edge;child<dest.edge+dest.count;child++){
+                                const Node& completion=nodes[edges[child].node];
+                                for(unsigned j=0;j<std::min(2u,completion.words);j++){
+                                    auto w=words[completion.word+j];
+                                    hits.push_back({pool+w.text,pool+w.reading,n,w.frequency*.5-12,3});
+                                }
+                            }
+                        }
                         if(m.end<n && dest.count)next.push_back({edge->node,m.end,cost});
                         for(unsigned w=0;w<std::min(dest.words,12u);w++){
                             auto item=words[dest.word+w];string word=pool+item.text,read=pool+item.reading;

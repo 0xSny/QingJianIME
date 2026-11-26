@@ -49,7 +49,7 @@ final class KeyboardController: UIInputViewController {
         let changed=options.fly != v.fly;options=v
         applyLearningReset()
         if changed {cancelComposition()}
-        heightRule?.constant=v.height;board.setNeedsLayout();refreshTheme();search()
+        heightRule?.constant=v.height;board.setNeedsLayout();refreshTheme();checkClipboard();search()
     }
     @objc func resumeTheme(){refreshTheme();DispatchQueue.main.async { [weak self] in self?.refreshTheme() }}
     func refreshTheme(confirmed: Bool = false) {
@@ -133,7 +133,11 @@ final class KeyboardController: UIInputViewController {
     }
     func cancelComposition(){if !raw.isEmpty {mark("");textDocumentProxy.unmarkText()};reset()}
     func letter(_ s:String,_ near:[UInt8]){
-        guard raw.count<256,!(s=="'" && (raw.isEmpty || raw.last==39)) else{return}
+        if raw.count>=256 {
+            if !hits.isEmpty {pick(0)}
+            if raw.count>=256 {textDocumentProxy.unmarkText();reset()}
+        }
+        guard !(s=="'" && (raw.isEmpty || raw.last==39)) else{return}
         undoText="";document=textDocumentProxy.documentIdentifier
         raw.append(contentsOf:s.utf8);taps.append(contentsOf:near)
         hits=[];board.offset=0;mark(String(decoding:raw,as:UTF8.self));search()
