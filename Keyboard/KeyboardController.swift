@@ -22,18 +22,28 @@ final class KeyboardController: UIInputViewController {
         }
     }
     override func loadView() {
-        board=Canvas(frame:.zero,inputViewStyle:.keyboard);board.allowsSelfSizing=true
-        board.dark=Self.lastDark;board.backgroundColor=board.base
-        board.isMultipleTouchEnabled=true;board.owner=self;board.isOpaque=true
-        self.inputView=board
+        let root=UIInputView(frame:.zero,inputViewStyle:.default)
+        root.allowsSelfSizing=true
+        root.isOpaque=true
+        let canvas=Canvas(frame:root.bounds)
+        canvas.autoresizingMask=[.flexibleWidth,.flexibleHeight]
+        canvas.dark=Self.lastDark
+        canvas.owner=self
+        canvas.isMultipleTouchEnabled=true
+        canvas.isOpaque=true
+        canvas.backgroundColor=canvas.base
+        root.backgroundColor=canvas.base
+        board=canvas
+        root.addSubview(canvas)
+        view=root
     }
     override func viewDidLoad() {
         super.viewDidLoad()
-        let c=board.heightAnchor.constraint(equalToConstant:settings.value.height);c.priority = .defaultHigh;c.isActive=true;heightRule=c
+        let c=view.heightAnchor.constraint(equalToConstant:settings.value.height);c.priority = .defaultHigh;c.isActive=true;heightRule=c
         observation=settings.$value.sink { [weak self] value in
             DispatchQueue.main.async { self?.apply(value) }
         }
-        for name in [UIScene.didActivateNotification,UIScene.willEnterForegroundNotification,UIWindow.didBecomeKeyNotification] {
+        for name in [UIScene.didActivateNotification,UIScene.willEnterForegroundNotification,UIWindow.didBecomeKeyNotification, Notification.Name("NSExtensionHostWillEnterForegroundNotification"), Notification.Name("NSExtensionHostDidBecomeActiveNotification")] {
             NotificationCenter.default.addObserver(self,selector:#selector(resumeTheme),name:name,object:nil)
         }
         let path=Bundle.main.path(forResource:"lex",ofType:"bin") ?? ""
@@ -46,10 +56,15 @@ final class KeyboardController: UIInputViewController {
         board.haptic.prepare();board.click.prepare()
     }
     func apply(_ v:Options) {
-        let changed=options.fly != v.fly;options=v
+        let prior=options;let changed=prior.fly != v.fly;options=v
         applyLearningReset()
         if changed {cancelComposition()}
-        heightRule?.constant=v.height;board.setNeedsLayout();refreshTheme();checkClipboard();search()
+        heightRule?.constant=v.height;board.setNeedsLayout();board.setNeedsDisplay();refreshTheme()
+        if prior.clipboard != v.clipboard { checkClipboard() }
+        if prior.expanded != v.expanded || prior.fuzzy != v.fuzzy || prior.spatial != v.spatial || prior.phrases != v.phrases {
+            if !raw.isEmpty {mark(String(decoding:raw,as:UTF8.self))}
+            search()
+        }
     }
     @objc func resumeTheme(){refreshTheme();DispatchQueue.main.async { [weak self] in self?.refreshTheme() }}
     func refreshTheme(confirmed: Bool = false) {
@@ -58,7 +73,8 @@ final class KeyboardController: UIInputViewController {
         func style(_ trait: UIUserInterfaceStyle?) -> PaletteStyle {
             trait == .dark ? .dark : trait == .light ? .light : .unknown
         }
-        let dark = Appearance.dark(forcedLight:settings.value.appearance != 0,
+        let dark = Appearance.dark(option:settings.value.appearance,
+            display:style((b.window?.screen ?? UIScreen.main).traitCollection.userInterfaceStyle),
             host:appearance == .dark ? .dark : appearance == .light ? .light : .unknown,
             scene:style(b.window?.windowScene?.traitCollection.userInterfaceStyle),
             window:style(b.window?.traitCollection.userInterfaceStyle),view:style(b.traitCollection.userInterfaceStyle),
@@ -74,7 +90,9 @@ final class KeyboardController: UIInputViewController {
         Self.lastDark=dark
         guard b.dark != dark || b.backgroundColor != b.base || panel != nil else {return}
         CATransaction.begin();CATransaction.setDisableActions(true)
-        b.dark=dark;b.backgroundColor=b.base;b.setNeedsDisplay()
+        b.dark=dark;b.backgroundColor=b.base;viewIfLoaded?.backgroundColor=b.base
+        b.setNeedsDisplay()
+        if b.window != nil { b.layer.displayIfNeeded() }
         panel?.overrideUserInterfaceStyle=dark ? .dark:.light
         CATransaction.commit()
     }

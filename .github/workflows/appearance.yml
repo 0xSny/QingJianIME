@@ -18,5 +18,7 @@ jobs:
         if: always()
         with:
           name: Keyboard-return-results
-          path: ReturnResult.xcresult
+          path: |
+            ReturnDiagnostics
+            ReturnResult.xcresult
 

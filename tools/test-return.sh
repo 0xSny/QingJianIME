@@ -8,5 +8,6 @@ xcodebuild "${args[@]}" build-for-testing > /tmp/qj-sim-build.log || { tail -100
 xcrun simctl bootstatus "$device" -b
 xcrun simctl install "$device" SimBuild/Build/Products/Debug-iphonesimulator/QingJian.app
 xcrun simctl ui "$device" appearance dark
+trap 'mkdir -p ReturnDiagnostics; xcrun simctl io "$device" screenshot ReturnDiagnostics/final.png || true; find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -name "Keyboard*.ips" -exec cp {} ReturnDiagnostics/ \; 2>/dev/null || true; if [ -d ReturnResult.xcresult ]; then xcrun xcresulttool export attachments --path ReturnResult.xcresult --output-path ReturnDiagnostics/attachments || true; fi' EXIT
 xcodebuild "${args[@]}" -parallel-testing-enabled NO -resultBundlePath ReturnResult.xcresult test-without-building
 

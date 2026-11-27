@@ -2,7 +2,7 @@ import SwiftUI
 import Darwin
 
 struct Options: Codable, Equatable {
-    var fly = false, hints = 0, expanded = false, vibration = 2
+    var fly = false, hints = 1, expanded = false, vibration = 2
     var sound = true, bubbles = true, swipe = true, doubleSpace = true, swipeDelete = true
     var resetSerial = 0
     var volume = 0.75
@@ -22,6 +22,25 @@ final class Settings: ObservableObject {
             if shared { db.synchronize(); notify_post(Self.signal) }
         }
     }
+    func copyOptions() -> Bool {
+        guard let data = try? JSONEncoder().encode(value) else { return false }
+        UIPasteboard.general.string = "QJSettings1:" + data.base64EncodedString()
+        return true
+    }
+    func importOptions() -> Bool {
+        let prefix = "QJSettings1:"
+        guard let text = UIPasteboard.general.string, text.hasPrefix(prefix),
+              let data = Data(base64Encoded: String(text.dropFirst(prefix.count))),
+              var incoming = try? JSONDecoder().decode(Options.self, from:data),
+              (0...3).contains(incoming.appearance), (0...3).contains(incoming.vibration),
+              (0...2).contains(incoming.hand), (0...2).contains(incoming.hints),
+              (0...1).contains(incoming.volume), (0...1.5).contains(incoming.spatial),
+              (215...345).contains(incoming.height), (6...30).contains(incoming.cursor) else { return false }
+        incoming.resetSerial=value.resetSerial
+        incoming.phrases=value.phrases.merging(incoming.phrases){ _,new in new }
+        value=incoming
+        return true
+    }
     @Published private(set) var learned = 0
     func report(_ n: Int) {
         guard db.integer(forKey:"learned.count") != n else {return}
@@ -35,6 +54,7 @@ final class Settings: ObservableObject {
     }
     deinit { if shared { notify_cancel(token) } }
     func reload() {
+        if shared { db.synchronize() }
         let n=db.integer(forKey:"learned.count"); if n != learned {learned=n}
         guard let d=db.data(forKey:"options.v1"),
               let saved=try? JSONSerialization.jsonObject(with:d) as? [String:Any],
@@ -54,6 +74,7 @@ struct Controls: View {
     @State private var code = ""
     @State private var phrase = ""
     @State private var confirm = false
+    @State private var transferStatus = ""
     let groups = ["zh/z","ch/c","sh/s","n/l","f/h","l/r","an/ang","en/eng","in/ing","ian/iang","uan/uang"]
     func picker(_ title: String, _ labels: [String], _ selection: Binding<Int>) -> some View {
         Picker(title, selection: selection) { ForEach(labels.indices, id: \.self) { Text(labels[$0]).tag($0) } }.pickerStyle(.menu)
@@ -64,7 +85,7 @@ struct Controls: View {
                 Toggle("小鹤双拼", isOn: $model.value.fly)
                 picker("键面助记", ["完整","极简","隐藏"], $model.value.hints)
                 Toggle("展开读音", isOn: $model.value.expanded)
-                picker("外观", ["跟随系统","清爽浅色","纯净亮白"], $model.value.appearance)
+                picker("外观", ["跟随系统","清爽浅色","纯净亮白","固定深色"], $model.value.appearance)
             }
             Section("手感") {
                 picker("触感", ["关闭","轻微","清脆","强劲"], $model.value.vibration)
@@ -99,6 +120,18 @@ struct Controls: View {
                     Text("已学词条　\(learned)")
                     Button("清空自学习词库", role: .destructive) { confirm = true }
                         .confirmationDialog("清空全部已学词条？", isPresented: $confirm) { Button("清空", role: .destructive, action: clear) }
+                }
+            }
+            if !model.shared {
+                Section("同步设置和短语") {
+                    if extensionMode {
+                        Button("从剪贴板导入设置和短语") {
+                            transferStatus = model.importOptions() ? "已应用到当前键盘" : "请先在宿主复制设置，并允许键盘访问剪贴板"
+                        }
+                    } else {
+                        Button("复制设置和短语") { transferStatus = model.copyOptions() ? "已复制，在键盘设置中点导入" : "复制失败" }
+                    }
+                    if !transferStatus.isEmpty { Text(transferStatus).font(.footnote) }
                 }
             }
             Section("快捷短语") {

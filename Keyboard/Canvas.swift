@@ -16,12 +16,13 @@ final class Finger {
     var timer: Timer?
     init(_ c: Cap, _ p: CGPoint) { cap = c; start = p }
 }
-final class Canvas: UIInputView, UIInputViewAudioFeedback {
+final class Canvas: UIView, UIInputViewAudioFeedback {
     weak var owner: KeyboardController?
     var continuationMask:UInt32=0
     var dark = false, mode = 0, upper = false, locked = false, grid = false
     var filter = 0, gridPage = 0, latinPunctuation = false, offset: CGFloat = 0, paste = false
     var caps = [Cap](), slots = [(Int,CGRect)](), fingers = [UITouch:Finger]()
+    private var candidateFrames = [Int:CGRect]()
     var forgetHit: QHit?, forgetPoint = CGPoint.zero
     weak var focusFinger: Finger?
     var pressedCap: Cap?, stamp = 0, lastShift = 0.0
@@ -35,6 +36,10 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
     var base: UIColor { UIColor(white: dark ? 0.12 : opt.appearance == 2 ? 0.96 : 0.86, alpha: 1) }
     var face: UIColor { UIColor(white: dark ? 0.28 : 1, alpha: 1) }
     override func didMoveToWindow() { super.didMoveToWindow(); owner?.refreshTheme(); if window == nil { stop() } }
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previous) { owner?.refreshTheme() }
+    }
     func stop() { fingers.values.forEach { $0.timer?.invalidate() }; fingers.removeAll(); pressedCap = nil; setNeedsDisplay() }
     func label(_ s: String, in r: CGRect, size: CGFloat, color: UIColor, bold: Bool = false) {
         let font = UIFont.systemFont(ofSize: max(5,size), weight: bold ? .medium : .regular)
@@ -48,7 +53,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
         str.draw(at: CGPoint(x:r.midX-sz.width/2,y:r.midY-sz.height/2),withAttributes:a)
     }
     func build() {
-        caps.removeAll(keepingCapacity:true); slots.removeAll(keepingCapacity:true)
+        caps.removeAll(keepingCapacity:true); slots.removeAll(keepingCapacity:true); candidateFrames.removeAll(keepingCapacity:true)
         let w=bounds.width, top: CGFloat=42, h=max(1,(bounds.height-top)/4)
         guard w>0 else { return }
         let area = w * (opt.hand == 0 ? 1 : 0.83), left = opt.hand == 2 ? w-area : 0
@@ -69,12 +74,12 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
             for (i,width) in widths.enumerated() {
                 let r=CGRect(x:x,y:0,width:(i==widths.count-1 ? max(width,right-x):width),height:top)
                 let visible=r.intersection(CGRect(x:36,y:0,width:span,height:top))
-                if !visible.isNull { slots.append((i,visible)) }; x += width
+                if !visible.isNull && visible.width > 0 { slots.append((i,visible)); candidateFrames[i]=r }; x += width
             }
         } else { cap("scheme", opt.fly ? "小鹤双拼":"全拼",36,0,max(1,right-36),top) }
         if grid {
             let all = items.indices.filter { filter==0 || items[$0].text.count==filter }
-            let start = min(max(0,gridPage*12),max(0,all.count-12))
+            let start = min(max(0,gridPage*12),max(0,(max(1,all.count)-1)/12*12))
             for (k,i) in all.dropFirst(start).prefix(12).enumerated() {
                 cap("pick"+String(i),items[i].text,CGFloat(k%4)*w/4,top+CGFloat(k/4)*h,w/4,h)
             }
@@ -89,17 +94,25 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
         rows.append(alpha ? "num sym lang globe space ' delret" : mode==2 ? "abc sym 0 . space delret" : (mode==3 ? "abc num punctuation emoji space delret":"abc num sym globe space delret"))
         let titles=["shift":locked ? "⇪":"⇧","del":"⌫","space":"空格","lang":mode==1 ? "英/中":"中/英","globe":"◎","delret":owner?.returnTitle ?? "换行","num":"123","sym":"符","abc":"返回","emoji":"☺","punctuation":latinPunctuation ? "英文":"中文"]
         for (j,row) in rows.enumerated() {
-            let keys=row.split(separator:" ").map(String.init)
+            let keys=row.split(separator:" ").map(String.init).filter {
+                $0 != "globe" || owner?.needsInputModeSwitchKey == true
+            }
             let inset:CGFloat = alpha && j==1 ? area/20 : 0
-            let weights=keys.map { $0=="space" ? 3.6 : $0=="delret" ? 1.7 : 1.0 }
+            let weights=keys.map { alpha && j == 2 && ($0 == "shift" || $0 == "del") ? 1.5 : $0=="space" ? 3.6 : $0=="delret" ? 1.7 : 1.0 }
             let unit=(area-2*inset)/CGFloat(weights.reduce(0,+))
             var x=left+inset
             for (i,id) in keys.enumerated() {
                 let width=CGFloat(weights[i])*unit
-                var display=titles[id] ?? (upper && mode==1 ? id.uppercased() : id)
-                let show=mode==0 && opt.fly && opt.hints<2 && hints[id] != nil
-                if show && opt.hints==0, let digraph=["u":"sh","i":"ch","v":"zh"][id] {display += " "+digraph}
-                cap(id,display,x,top+CGFloat(j)*h,width,h,show ? hints[id] ?? "" : "")
+                let flyKey = mode == 0 && opt.fly && hints[id] != nil
+                let display=titles[id] ?? ((flyKey || (upper && mode == 1)) ? id.uppercased() : id)
+                let endings = hints[id] ?? ""
+                let cue: String
+                switch (flyKey, opt.hints) {
+                case (true, 0): cue=endings
+                case (true, 1): cue=endings.split(separator:" ").first(where:{String($0) != id}).map(String.init) ?? ""
+                default: cue=""
+                }
+                cap(id,display,x,top+CGFloat(j)*h,width,h,cue)
                 x+=width
             }
         }
@@ -128,6 +141,33 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
         set {}
     }
     override func layoutSubviews(){super.layoutSubviews();build();setNeedsDisplay()}
+    private func drawFlyKey(_ cap: Cap, in rect: CGRect, pitch: CGFloat) {
+        let inset = rect.insetBy(dx:3, dy:2)
+        let scale = min(1, pitch/38, inset.height/43)
+        let primarySize = 20 * scale
+        let cueSize = min(10 * scale, (pitch-10)/2.6)
+        let primaryHeight = inset.height * (opt.hints == 0 ? 0.53 : 0.61)
+        let primary = CGRect(x:inset.minX,y:inset.minY,width:inset.width,height:primaryHeight)
+        let initials = ["u":"sh","i":"ch","v":"zh"]
+        if opt.hints == 0, let initial=initials[cap.id] {
+            let small=cueSize*0.95
+            let w=(cap.face as NSString).size(withAttributes:[.font:UIFont.systemFont(ofSize:primarySize)]).width
+            let aux=(initial as NSString).size(withAttributes:[.font:UIFont.systemFont(ofSize:small)]).width
+            let start=primary.midX-(w+aux+2)/2
+            label(cap.face,in:CGRect(x:start-1,y:primary.minY,width:w+2,height:primary.height),size:primarySize,color:ink)
+            label(initial,in:CGRect(x:start+w+1,y:primary.minY+1,width:aux+2,height:primary.height),size:small,color:ink.withAlphaComponent(0.68))
+        } else {
+            label(cap.face,in:primary,size:primarySize,color:ink)
+        }
+        let cues=cap.sub.split(separator:" ")
+        let line=ceil(cueSize*1.12)
+        let center=(primary.maxY + inset.maxY)/2
+        for (index, text) in cues.enumerated() {
+            let y=center + (CGFloat(index)-CGFloat(cues.count)/2)*line
+            label(String(text),in:CGRect(x:inset.minX,y:y,width:inset.width,height:line),
+                  size:cueSize,color:ink.withAlphaComponent(0.62))
+        }
+    }
     override func draw(_ rect:CGRect) {
         build();base.setFill();UIRectFill(bounds)
         let scale=window?.screen.scale ?? contentScaleFactor
@@ -141,18 +181,19 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
             UIBezierPath(roundedRect:r,cornerRadius:5).fill()
             UIColor.white.withAlphaComponent(dark ? 0.1:0.8).setFill()
             UIRectFill(CGRect(x:r.minX+5,y:r.minY,width:max(0,r.width-10),height:1/scale))
-            let has = !cap.sub.isEmpty
-            let primary=has ? CGRect(x:r.minX+3,y:r.minY,width:r.width-6,height:r.height*0.55):r
-            label(cap.face,in:primary,size:cap.face.count==1 ? (has ? 19:22):16,color:cap.id=="delret" ? .white:ink)
-            if has {
-                let parts=cap.sub.split(separator:" "), lh=r.height*0.42/CGFloat(max(2,parts.count))
-                for (i,s) in parts.enumerated() {
-                    label(String(s),in:CGRect(x:r.minX+3,y:r.midY+CGFloat(i)*lh,width:r.width-6,height:lh),size:min(10,lh),color:ink.withAlphaComponent(0.62))
-                }
+            if mode == 0 && opt.fly && opt.hints < 2 && hints[cap.id] != nil {
+                let pitch=bounds.width*(opt.hand == 0 ? 1 : 0.83)/10
+                drawFlyKey(cap,in:r,pitch:pitch)
+            } else {
+                label(cap.face,in:r,size:cap.face.count==1 ? 22:16,color:cap.id=="delret" ? .white:ink)
             }
         }
         for (i,r) in slots where i < (owner?.hits.count ?? 0) {
-            label(owner!.hits[i].text,in:r,size:18,color:ink)
+            guard let natural=candidateFrames[i], let context=UIGraphicsGetCurrentContext() else {continue}
+            context.saveGState()
+            context.clip(to:r)
+            label(owner!.hits[i].text,in:natural,size:18,color:ink)
+            context.restoreGState()
             ink.withAlphaComponent(0.14).setFill();UIRectFill(CGRect(x:r.maxX-1/scale,y:10,width:1/scale,height:22))
         }
         if let h=forgetHit {let r=forgetBox;face.setFill();UIBezierPath(roundedRect:r,cornerRadius:9).fill();label("重置「"+h.text+"」词频",in:r.insetBy(dx:5,dy:0),size:14,color:ink)}
@@ -211,7 +252,7 @@ final class Canvas: UIInputView, UIInputViewAudioFeedback {
     override func touchesMoved(_ touches:Set<UITouch>,with event:UIEvent?){
         for t in touches { guard let f=fingers[t],!f.done else{continue}
             let p=t.location(in:self),dx=p.x-f.start.x,dy=p.y-f.start.y
-            if f.cap.id.hasPrefix("pick") && abs(dx)>=8 {
+            if f.cap.id.hasPrefix("pick") && f.cap.box.minY == 0 && (f.moved || abs(dx)>=8) {
                 f.timer?.invalidate();f.moved=true;offset -= p.x-t.previousLocation(in:self).x;setNeedsDisplay()
             } else if f.cap.id=="space" {
                 let steps=Int(dx/opt.cursor);if steps != f.steps {owner?.cursor(steps-f.steps);f.steps=steps;f.moved=true;if opt.vibration>0 {haptic.impactOccurred(intensity:0.3)}}
