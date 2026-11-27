@@ -91,7 +91,7 @@ final class ReturnTests: XCTestCase {
         var position=waitForBoard(4)
         for _ in 0..<4 where position==nil {
             let globe=app.buttons.matching(NSPredicate(format:"label IN %@",["Next keyboard","下一个键盘","下一键盘"])).firstMatch
-            if globe.exists {globe.tap()} else {tap(0.07,screen.height*0.954)}
+            if globe.exists && !globe.frame.isEmpty {tap(globe.frame.midX/screen.width,globe.frame.midY)} else {tap(0.07,screen.height*0.954)}
             position=waitForBoard(4)
         }
         let pos=try XCTUnwrap(position,"No QingJian return key in keyboard area")
@@ -125,7 +125,15 @@ final class ReturnTests: XCTestCase {
         tap(0.05,top)
         prefs.activate()
         app.activate()
-        try assertDark("返回应用",XCUIScreen.main.screenshot())
+        // The host foregrounds before the system reattaches the keyboard window.
+        // Sample the same screenshot that first contains the extension; never refocus the field.
+        let deadline=Date().addingTimeInterval(8)
+        var returning=XCUIScreen.main.screenshot()
+        while geometry(returning)==nil && Date()<deadline {
+            Thread.sleep(forTimeInterval:0.035)
+            returning=XCUIScreen.main.screenshot()
+        }
+        try assertDark("返回后首次可见键盘",returning)
         Thread.sleep(forTimeInterval:0.4)
         try assertDark("返回稳定画面",XCUIScreen.main.screenshot())
     }
