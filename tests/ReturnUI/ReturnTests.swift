@@ -15,12 +15,16 @@ final class ReturnTests: XCTestCase {
                 prefs.coordinate(withNormalizedOffset:.zero).withOffset(CGVector(dx:center.x,dy:center.y)).tap()
                 return true
             }
+            print("Selecting "+labels[0]+" in "+prefs.debugDescription)
             for _ in 0..<8 {
                 for label in labels {
                     let text=prefs.staticTexts.matching(NSPredicate(format:"label == %@",label)).firstMatch
-                    if tapVisible(text){return}
+
                     let cell=prefs.cells.matching(NSPredicate(format:"label BEGINSWITH[c] %@",label)).firstMatch
                     if tapVisible(cell){return}
+                    let button=prefs.buttons.matching(NSPredicate(format:"label == %@ OR label BEGINSWITH[c] %@",label,label+",")).firstMatch
+                    if tapVisible(button){return}
+                    if text.exists && text.frame.minY>100 && tapVisible(text){return}
                 }
                 prefs.swipeUp()
             }
@@ -29,11 +33,9 @@ final class ReturnTests: XCTestCase {
         }
         try choose(["General"])
         try choose(["Keyboard"])
-        let lists=prefs.cells["KEYBOARDS"].firstMatch
-        XCTAssertTrue(lists.waitForExistence(timeout:10))
-        lists.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()
+        try choose(["Keyboards"])
         try choose(["Add New Keyboard…","Add New Keyboard...","Add New Keyboard"])
-        try choose(["清简输入法","QingJian","清简"])
+        try choose(["清简输入法","QingJian","清简","Keyboard"])
         if prefs.buttons["Done"].exists {prefs.buttons["Done"].tap()}
         app.launch()
         let field=app.textFields.firstMatch
