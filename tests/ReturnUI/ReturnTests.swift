@@ -42,53 +42,91 @@ final class ReturnTests: XCTestCase {
         let field=app.textFields["return.input"]
         XCTAssertTrue(field.waitForExistence(timeout:15))
         field.tap()
-        let key=app.descendants(matching:.any).matching(identifier:"qj.q").firstMatch
-        func attach(_ name:String) {
-            let shot=XCTAttachment(screenshot:XCUIScreen.main.screenshot())
-            shot.name=name;shot.lifetime = .keepAlways;add(shot)
+        func attach(_ name:String, _ shot:XCUIScreenshot) {
+            let a=XCTAttachment(screenshot:shot)
+            a.name=name
+            a.lifetime = .keepAlways
+            add(a)
         }
-        attach("系统首次选择的键盘")
-        for _ in 0..<4 where !key.waitForExistence(timeout:2) {
-            let globe=app.buttons.matching(NSPredicate(format:"label IN %@",["Next keyboard","下一个键盘","下一键盘"])).firstMatch
-            if globe.exists {globe.tap()} else {
-                app.coordinate(withNormalizedOffset:CGVector(dx:0.07,dy:0.954)).tap()
+        let screen=app.frame
+        func tap(_ x:CGFloat,_ y:CGFloat) {
+            app.coordinate(withNormalizedOffset:.zero).withOffset(CGVector(dx:screen.width*x,dy:y)).tap()
+        }
+
+        // The extension's blue return cap appears in all schemes. Its height
+        // gives the actual row pitch even when the system resizes the remote view.
+        func geometry(_ shot:XCUIScreenshot) -> (bottom:CGFloat,pitch:CGFloat)? {
+            guard let cg=shot.image.cgImage else {return nil}
+            let scale=CGFloat(cg.width)/screen.width
+            let x=Int(CGFloat(cg.width)*0.965)
+            guard let strip=cg.cropping(to:CGRect(x:x,y:0,width:1,height:cg.height)),
+                  let ctx=CGContext(data:nil,width:1,height:cg.height,bitsPerComponent:8,bytesPerRow:4,
+                      space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue),
+                  let data=ctx.data else{return nil}
+            ctx.draw(strip,in:CGRect(x:0,y:0,width:1,height:cg.height))
+            let bytes=data.assumingMemoryBound(to:UInt8.self)
+            var start=0, length=0
+            for y in cg.height/2..<cg.height {
+                let j=4*y
+                if abs(Int(bytes[j])-74)<10 && abs(Int(bytes[j+1])-125)<10 && abs(Int(bytes[j+2])-184)<10 {
+                    if length==0 {start=y}
+                    length+=1
+                } else {
+                    if CGFloat(length)/scale>26 {
+                        return (CGFloat(start+length/2)/scale,CGFloat(length)/scale+6)
+                    }
+                    length=0
+                }
             }
+            return nil
         }
-        guard key.waitForExistence(timeout:10) else {
-            XCTFail("Custom extension is not visible: "+app.debugDescription);return
+        func waitForBoard(_ seconds:TimeInterval) -> (bottom:CGFloat,pitch:CGFloat)? {
+            let until=Date().addingTimeInterval(seconds)
+            repeat {
+                if let result=geometry(XCUIScreen.main.screenshot()) {return result}
+                Thread.sleep(forTimeInterval:0.15)
+            } while Date()<until
+            return nil
         }
-        func verify(_ name:String) {
-            let screenshot=XCUIScreen.main.screenshot()
-            let attachment=XCTAttachment(screenshot:screenshot);attachment.name=name;attachment.lifetime = .keepAlways;add(attachment)
-            let im=screenshot.image,box=key.frame
-            let point=CGPoint(x:box.minX+box.width*0.25,y:box.midY+box.height*0.24)
-            var pixel=[UInt8](repeating:0,count:4)
-            let ctx=CGContext(data:&pixel,width:1,height:1,bitsPerComponent:8,bytesPerRow:4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
-            let r=CGRect(x:point.x*im.scale,y:point.y*im.scale,width:1,height:1)
-            guard let crop=im.cgImage?.cropping(to:r) else{XCTFail("Key outside screenshot");return}
-            ctx.draw(crop,in:CGRect(x:0,y:0,width:1,height:1))
-            XCTAssertLessThan(pixel[0],150,name)
-            XCTAssertGreaterThan(pixel[0],35,name)
+        var position=waitForBoard(4)
+        for _ in 0..<4 where position==nil {
+            let globe=app.buttons.matching(NSPredicate(format:"label IN %@",["Next keyboard","下一个键盘","下一键盘"])).firstMatch
+            if globe.exists {globe.tap()} else {tap(0.07,screen.height*0.954)}
+            position=waitForBoard(4)
         }
-        verify("打开键盘")
-        // Switch to Flypy using the extension's own toolbar and verify a real conversion.
-        let mode=app.descendants(matching:.any).matching(identifier:"qj.scheme").firstMatch
-        if mode.exists && mode.label == "全拼" { mode.tap() }
-        for letter in ["n","i","h","c"] {
-            app.descendants(matching:.any).matching(identifier:"qj."+letter).firstMatch.tap()
+        let pos=try XCTUnwrap(position,"No QingJian return key in keyboard area")
+        let top=pos.bottom-3*pos.pitch
+        let bar=top-pos.pitch/2-21
+        func assertDark(_ name:String, _ shot:XCUIScreenshot) throws {
+            attach(name,shot)
+            let frame=try XCTUnwrap(geometry(shot),"Missing extension after returning")
+            let im=try XCTUnwrap(shot.image.cgImage)
+            let scale=CGFloat(im.width)/screen.width
+            let area=CGRect(x:screen.width*0.023*scale,y:(frame.bottom-3.20*frame.pitch)*scale,width:1,height:1)
+            let pixel=try XCTUnwrap(im.cropping(to:area))
+            let ctx=try XCTUnwrap(CGContext(data:nil,width:1,height:1,bitsPerComponent:8,bytesPerRow:4,
+                       space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+            ctx.draw(pixel,in:CGRect(x:0,y:0,width:1,height:1))
+            let brightness=ctx.data!.assumingMemoryBound(to:UInt8.self)[0]
+            print("Q key red channel at "+name+" = "+String(brightness))
+            XCTAssertTrue((40...145).contains(brightness),name)
         }
-        let first=app.descendants(matching:.any).matching(identifier:"qj.pick0").firstMatch
-        XCTAssertTrue(first.waitForExistence(timeout:4))
-        first.tap()
-        XCTAssertEqual(field.value as? String,"你好")
-        attach("双拼输入完成")
-        key.tap()
-        let settings=XCUIApplication(bundleIdentifier:"com.apple.Preferences")
-        settings.activate()
+        try assertDark("打开键盘",XCUIScreen.main.screenshot())
+        tap(0.5,bar)
+        tap(0.70,top+2*pos.pitch)
+        tap(0.75,top)
+        tap(0.60,top+pos.pitch)
+        tap(0.40,top+2*pos.pitch)
+        tap(0.53,pos.bottom)
+        let converted=NSPredicate(format:"value == %@", "你好")
+        let conversion=XCTNSPredicateExpectation(predicate:converted,object:field)
+        XCTAssertEqual(XCTWaiter.wait(for:[conversion],timeout:5),.completed,"field: "+String(describing:field.value))
+        attach("小鹤双拼输入你好",XCUIScreen.main.screenshot())
+        tap(0.05,top)
+        prefs.activate()
         app.activate()
-        XCTAssertTrue(key.waitForExistence(timeout:10))
-        verify("返回应用")
+        try assertDark("返回应用",XCUIScreen.main.screenshot())
         Thread.sleep(forTimeInterval:0.4)
-        verify("返回稳定画面")
+        try assertDark("返回稳定画面",XCUIScreen.main.screenshot())
     }
 }
