@@ -8,6 +8,10 @@ final class ReturnTests: XCTestCase {
         func choose(_ labels:[String]) throws {
             let item=prefs.staticTexts.matching(NSPredicate(format:"label IN %@",labels)).firstMatch
             for _ in 0..<7 {
+                for label in labels {
+                    let cell=prefs.cells.matching(NSPredicate(format:"label BEGINSWITH[c] %@",label)).firstMatch
+                    if cell.exists && cell.isHittable {cell.tap();return}
+                }
                 if item.exists && item.isHittable { item.tap(); return }
                 prefs.swipeUp()
             }
@@ -16,7 +20,9 @@ final class ReturnTests: XCTestCase {
         }
         try choose(["General"])
         try choose(["Keyboard"])
-        try choose(["Keyboards"])
+        let lists=prefs.cells["KEYBOARDS"].firstMatch
+        XCTAssertTrue(lists.waitForExistence(timeout:10))
+        lists.tap()
         try choose(["Add New Keyboard…","Add New Keyboard...","Add New Keyboard"])
         try choose(["清简输入法","QingJian","清简"])
         if prefs.buttons["Done"].exists {prefs.buttons["Done"].tap()}
