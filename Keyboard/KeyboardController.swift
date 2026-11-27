@@ -2,6 +2,22 @@ import UIKit
 import SwiftUI
 import Combine
 
+private final class KeyboardRoot: UIInputView, UIInputViewAudioFeedback {
+    var requestedHeight: CGFloat = 268 {
+        didSet { if oldValue != requestedHeight {invalidateIntrinsicContentSize();setNeedsLayout()} }
+    }
+    var enableInputClicksWhenVisible: Bool {true}
+    override var intrinsicContentSize: CGSize {
+        CGSize(width:UIView.noIntrinsicMetric,height:requestedHeight)
+    }
+    override func systemLayoutSizeFitting(_ targetSize:CGSize,
+        withHorizontalFittingPriority horizontal:UILayoutPriority,
+        verticalFittingPriority vertical:UILayoutPriority) -> CGSize {
+        let width=horizontal == .required ? targetSize.width : bounds.width
+        return CGSize(width:width,height:requestedHeight)
+    }
+}
+
 final class KeyboardController: UIInputViewController {
     let settings = Settings(allowShared:false)
     private let queue = DispatchQueue(label:"com.custom.ime.decode",qos:.userInteractive)
@@ -46,7 +62,8 @@ final class KeyboardController: UIInputViewController {
         }
     }
     override func loadView() {
-        let root=UIInputView(frame:.zero,inputViewStyle:.default)
+        let root=KeyboardRoot(frame:.zero,inputViewStyle:.default)
+        root.requestedHeight=settings.value.height
         root.allowsSelfSizing=true
         root.isOpaque=true
         let canvas=Canvas(frame:root.bounds)
@@ -65,7 +82,7 @@ final class KeyboardController: UIInputViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         settings.setSharedAccess(hasFullAccess)
-        let c=view.heightAnchor.constraint(equalToConstant:settings.value.height);c.priority = .defaultHigh;c.isActive=true;heightRule=c
+        let c=view.heightAnchor.constraint(equalToConstant:settings.value.height);c.priority = UILayoutPriority(999);c.isActive=true;heightRule=c
         observation=settings.$value.sink { [weak self] value in
             DispatchQueue.main.async { self?.apply(value) }
         }
@@ -85,6 +102,7 @@ final class KeyboardController: UIInputViewController {
         let prior=options;let changed=prior.fly != v.fly;options=v;board.opt=v
         applyLearningReset()
         if changed {cancelComposition()}
+        (viewIfLoaded as? KeyboardRoot)?.requestedHeight=v.height
         heightRule?.constant=v.height;board.setNeedsLayout();board.setNeedsDisplay();refreshTheme()
         if prior.clipboard != v.clipboard { checkClipboard() }
         if prior.expanded != v.expanded || prior.fuzzy != v.fuzzy || prior.spatial != v.spatial || prior.phrases != v.phrases {
