@@ -6,13 +6,22 @@ final class ReturnTests: XCTestCase {
         prefs.launchArguments=["-AppleLanguages","(en)"]
         prefs.launch()
         func choose(_ labels:[String]) throws {
-            let item=prefs.staticTexts.matching(NSPredicate(format:"label IN %@",labels)).firstMatch
-            for _ in 0..<7 {
+            let screen=prefs.frame.insetBy(dx:5,dy:55)
+            func tapVisible(_ item:XCUIElement)->Bool {
+                guard item.exists else{return false}
+                let frame=item.frame
+                let center=CGPoint(x:frame.midX,y:frame.midY)
+                guard frame.width>2,frame.height>2,screen.contains(center) else{return false}
+                prefs.coordinate(withNormalizedOffset:.zero).withOffset(CGVector(dx:center.x,dy:center.y)).tap()
+                return true
+            }
+            for _ in 0..<8 {
                 for label in labels {
+                    let text=prefs.staticTexts.matching(NSPredicate(format:"label == %@",label)).firstMatch
+                    if tapVisible(text){return}
                     let cell=prefs.cells.matching(NSPredicate(format:"label BEGINSWITH[c] %@",label)).firstMatch
-                    if cell.exists && cell.isHittable {cell.tap();return}
+                    if tapVisible(cell){return}
                 }
-                if item.exists && item.isHittable { item.tap(); return }
                 prefs.swipeUp()
             }
             XCTFail("Settings row missing: "+labels.joined(separator:",")+" "+prefs.debugDescription)
@@ -22,7 +31,7 @@ final class ReturnTests: XCTestCase {
         try choose(["Keyboard"])
         let lists=prefs.cells["KEYBOARDS"].firstMatch
         XCTAssertTrue(lists.waitForExistence(timeout:10))
-        lists.tap()
+        lists.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()
         try choose(["Add New Keyboard…","Add New Keyboard...","Add New Keyboard"])
         try choose(["清简输入法","QingJian","清简"])
         if prefs.buttons["Done"].exists {prefs.buttons["Done"].tap()}
