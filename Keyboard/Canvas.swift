@@ -28,7 +28,7 @@ final class Canvas: UIView, UIInputViewAudioFeedback {
     var pressedCap: Cap?, stamp = 0, lastShift = 0.0
     let click = KeyClick()
     let haptic = UIImpactFeedbackGenerator(style: .rigid)
-    var opt: Options { owner?.settings.value ?? Options() }
+    var opt = Options()
     var enableInputClicksWhenVisible: Bool { true }
     let hints = ["q":"iu","w":"ei","e":"e","r":"uan","t":"ue üe","y":"un","u":"u","i":"i","o":"o uo","p":"ie","a":"a","s":"ong iong","d":"ai","f":"en","g":"eng","h":"ang","j":"an","k":"ing uai","l":"iang uang","z":"ou","x":"ia ua","c":"ao","v":"ui ü","b":"in","n":"iao","m":"ian"]
     let secondary = Dictionary(uniqueKeysWithValues: zip(Array("qwertyuiopasdfghjklzxcvbnm").map(String.init),Array("1234567890@#$%&*-+()!?，。；：").map(String.init)))
@@ -61,8 +61,8 @@ final class Canvas: UIView, UIInputViewAudioFeedback {
             caps.append(Cap(id:s,box:CGRect(x:x,y:y,width:width,height:height),face:title,sub:sub))
         }
         cap("settings","⚙",0,0,36,top)
-        cap("expand",grid ? "⌄":"⌃",w-34,0,34,top)
-        let right = w-34-(paste ? 52:0)
+        if !(owner?.hits.isEmpty ?? true) || grid { cap("expand",grid ? "⌄":"⌃",w-34,0,34,top) }
+        let right = w-(caps.last?.id == "expand" ? 34 : 0)-(paste ? 52:0)
         if paste { cap("paste","粘贴",right,0,35,top);cap("dismissPaste","×",right+35,0,17,top) }
         let items = owner?.hits ?? []
         if !items.isEmpty {
@@ -141,6 +141,24 @@ final class Canvas: UIView, UIInputViewAudioFeedback {
         set {}
     }
     override func layoutSubviews(){super.layoutSubviews();build();setNeedsDisplay()}
+    private var symbolCache = [String:UIImage]()
+    private func drawControl(_ id:String, in rect:CGRect) -> Bool {
+        let symbol:String
+        switch id {
+        case "del": symbol="delete.left"
+        case "shift": symbol=locked ? "capslock.fill" : upper ? "shift.fill":"shift"
+        case "globe": symbol="globe"
+        case "settings": symbol="gearshape"
+        case "expand": symbol=grid ? "chevron.down":"chevron.up"
+        default: return false
+        }
+        let icon=symbolCache[symbol] ?? UIImage(systemName:symbol,withConfiguration:UIImage.SymbolConfiguration(pointSize:17,weight:.regular))
+        guard let icon else {return false}
+        symbolCache[symbol]=icon
+        let target=CGRect(x:rect.midX-icon.size.width/2,y:rect.midY-icon.size.height/2,width:icon.size.width,height:icon.size.height)
+        icon.withTintColor(ink,renderingMode:.alwaysOriginal).draw(in:target)
+        return true
+    }
     private func drawFlyKey(_ cap: Cap, in rect: CGRect, pitch: CGFloat) {
         let inset = rect.insetBy(dx:3, dy:2)
         let scale = min(1, pitch/38, inset.height/43)
@@ -173,7 +191,7 @@ final class Canvas: UIView, UIInputViewAudioFeedback {
         let scale=window?.screen.scale ?? contentScaleFactor
         for cap in caps {
             let b=cap.box
-            if b.minY==0 { label(cap.face,in:b,size:15,color:ink);continue }
+            if b.minY==0 { if !drawControl(cap.id,in:b) {label(cap.face,in:b,size:15,color:ink)};continue }
             var r=b.insetBy(dx:2,dy:3)
             r.origin.x=(r.minX*scale).rounded()/scale; r.origin.y=(r.minY*scale).rounded()/scale
             UIColor(white:0,alpha:0.25).setFill();UIBezierPath(roundedRect:r.offsetBy(dx:0,dy:1),cornerRadius:5).fill()
@@ -181,6 +199,7 @@ final class Canvas: UIView, UIInputViewAudioFeedback {
             UIBezierPath(roundedRect:r,cornerRadius:5).fill()
             UIColor.white.withAlphaComponent(dark ? 0.1:0.8).setFill()
             UIRectFill(CGRect(x:r.minX+5,y:r.minY,width:max(0,r.width-10),height:1/scale))
+            if drawControl(cap.id,in:r) {continue}
             if mode == 0 && opt.fly && opt.hints < 2 && hints[cap.id] != nil {
                 let pitch=bounds.width*(opt.hand == 0 ? 1 : 0.83)/10
                 drawFlyKey(cap,in:r,pitch:pitch)

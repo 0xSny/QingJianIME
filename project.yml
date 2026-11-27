@@ -36,6 +36,20 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Shared/Group.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: Keyboard/Bridge.h
         APPLICATION_EXTENSION_API_ONLY: YES
+  KeycapTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: tests/Keycaps
+      - path: Keyboard
+        excludes: [Resources, Info.plist]
+      - path: Shared
+        excludes: [Group.entitlements]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.custom.ime.keycaptests
+        SWIFT_OBJC_BRIDGING_HEADER: Keyboard/Bridge.h
   ReturnUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -53,8 +67,9 @@ schemes:
       targets:
         QingJian: all
         ReturnUITests: [test]
+        KeycapTests: [test]
     test:
-      targets: [ReturnUITests]
+      targets: [KeycapTests, ReturnUITests]
   QingJian:
     build:
       targets:

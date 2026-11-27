@@ -3,9 +3,33 @@ import SwiftUI
 import Combine
 
 final class KeyboardController: UIInputViewController {
-    let settings = Settings()
+    let settings = Settings(allowShared:false)
     private let queue = DispatchQueue(label:"com.custom.ime.decode",qos:.userInteractive)
     private var decoder: QDecoder?, ticket: UInt64 = 0
+    private enum InputAction {
+        case letter(String,[UInt8]), literal(String), enter, space, back(Bool), cursor(Int)
+    }
+    private var pendingInput = [InputAction]()
+    private var decodeFinished = false
+    private func enqueue(_ action:InputAction, needsCandidate:Bool = false) -> Bool {
+        if pendingInput.isEmpty && !(needsCandidate && !raw.isEmpty && !decodeFinished) {return false}
+        pendingInput.append(action)
+        return true
+    }
+    private func resumeInput() {
+        let actions=pendingInput
+        pendingInput.removeAll(keepingCapacity:true)
+        for action in actions {
+            switch action {
+            case let .letter(s,t): letter(s,t)
+            case let .literal(s): literal(s)
+            case .enter: enter()
+            case .space: space()
+            case let .back(words): back(word:words)
+            case let .cursor(delta): cursor(delta)
+            }
+        }
+    }
     private var observation: AnyCancellable?, heightRule: NSLayoutConstraint?
     private var options = Options()
     private var raw = Data(), taps = Data(), previous = "", learnedText = "", learnedReading = ""
@@ -27,6 +51,7 @@ final class KeyboardController: UIInputViewController {
         root.isOpaque=true
         let canvas=Canvas(frame:root.bounds)
         canvas.autoresizingMask=[.flexibleWidth,.flexibleHeight]
+        canvas.opt=settings.value
         canvas.dark=Self.lastDark
         canvas.owner=self
         canvas.isMultipleTouchEnabled=true
@@ -39,6 +64,7 @@ final class KeyboardController: UIInputViewController {
     }
     override func viewDidLoad() {
         super.viewDidLoad()
+        settings.setSharedAccess(hasFullAccess)
         let c=view.heightAnchor.constraint(equalToConstant:settings.value.height);c.priority = .defaultHigh;c.isActive=true;heightRule=c
         observation=settings.$value.sink { [weak self] value in
             DispatchQueue.main.async { self?.apply(value) }
@@ -56,7 +82,7 @@ final class KeyboardController: UIInputViewController {
         board.haptic.prepare();board.click.prepare()
     }
     func apply(_ v:Options) {
-        let prior=options;let changed=prior.fly != v.fly;options=v
+        let prior=options;let changed=prior.fly != v.fly;options=v;board.opt=v
         applyLearningReset()
         if changed {cancelComposition()}
         heightRule?.constant=v.height;board.setNeedsLayout();board.setNeedsDisplay();refreshTheme()
@@ -97,10 +123,10 @@ final class KeyboardController: UIInputViewController {
         CATransaction.commit()
     }
     override func traitCollectionDidChange(_ previousTraitCollection:UITraitCollection?){super.traitCollectionDidChange(previousTraitCollection);refreshTheme()}
-    override func viewWillAppear(_ animated:Bool){super.viewWillAppear(animated);settings.reload();resumeTheme();checkClipboard()}
+    override func viewWillAppear(_ animated:Bool){super.viewWillAppear(animated);settings.setSharedAccess(hasFullAccess);settings.reload();resumeTheme();checkClipboard()}
     override func viewDidAppear(_ animated:Bool){super.viewDidAppear(animated);resumeTheme();checkClipboard()}
     override func viewDidLayoutSubviews(){super.viewDidLayoutSubviews();panel?.view.frame=board.bounds.inset(by:UIEdgeInsets(top:42,left:0,bottom:0,right:0));refreshTheme()}
-    override func viewWillDisappear(_ animated:Bool){super.viewWillDisappear(animated);board.stop();if let d=decoder{queue.async{d.flush();let n=Int(d.count());DispatchQueue.main.async { [weak self] in self?.settings.report(n) }}}}
+    override func viewWillDisappear(_ animated:Bool){super.viewWillDisappear(animated);pendingInput.removeAll();board.stop();if let d=decoder{queue.async{d.flush();let n=Int(d.count());DispatchQueue.main.async { [weak self] in self?.settings.report(n) }}}}
     override func textWillChange(_ textInput:UITextInput?){super.textWillChange(textInput);refreshTheme()}
     override func textDidChange(_ textInput:UITextInput?){
         super.textDidChange(textInput);resumeTheme()
@@ -141,6 +167,7 @@ final class KeyboardController: UIInputViewController {
         let p=UIHostingController(rootView:AnyView(ui));panel=p;addChild(p);board.addSubview(p.view);p.didMove(toParent:self);board.setNeedsLayout();refreshTheme()
     }
     func reset(){
+        pendingInput.removeAll();decodeFinished=false
         raw.removeAll();taps.removeAll();learnedText="";learnedReading="";hits=[];board.grid=false;board.offset=0
         board.forgetHit=nil;board.continuationMask=0;ticket=decoder?.invalidate() ?? 0;board.setNeedsDisplay()
     }
@@ -151,6 +178,7 @@ final class KeyboardController: UIInputViewController {
     }
     func cancelComposition(){if !raw.isEmpty {mark("");textDocumentProxy.unmarkText()};reset()}
     func letter(_ s:String,_ near:[UInt8]){
+        if enqueue(.letter(s,near)) {return}
         if raw.count>=256 {
             if !hits.isEmpty {pick(0)}
             if raw.count>=256 {textDocumentProxy.unmarkText();reset()}
@@ -161,6 +189,7 @@ final class KeyboardController: UIInputViewController {
         hits=[];board.offset=0;mark(String(decoding:raw,as:UTF8.self));search()
     }
     func search(){
+        decodeFinished=false
         guard let d=decoder else{return}
         let t=d.invalidate();ticket=t
         guard !raw.isEmpty else{return}
@@ -170,6 +199,8 @@ final class KeyboardController: UIInputViewController {
             let result=d.search(input,touches:touch,fly:o.fly,fuzzy:Int32(o.fuzzy),spatial:o.spatial,previous:prev,token:t)
             DispatchQueue.main.async { [weak self] in
                 guard let self,self.ticket==t else{return}
+                guard self.document == self.textDocumentProxy.documentIdentifier else {self.reset();return}
+                self.decodeFinished=true
                 self.board.continuationMask=nextLetters
                 self.hits=result
                 let code=String(decoding:input,as:UTF8.self)
@@ -178,6 +209,7 @@ final class KeyboardController: UIInputViewController {
                     if o.fly && o.expanded || !o.fly && h.reading.replacingOccurrences(of:" ",with:"")==code {self.mark(h.reading)}
                 }
                 self.board.setNeedsDisplay()
+                self.resumeInput()
             }
         }
     }
@@ -204,6 +236,7 @@ final class KeyboardController: UIInputViewController {
         queue.async{d.erase(h.text,reading:h.reading)};search()
     }
     func literal(_ s:String){
+        if enqueue(.literal(s),needsCandidate:true) {return}
         if !raw.isEmpty {if !hits.isEmpty{pick(0)};if !raw.isEmpty {textDocumentProxy.unmarkText();reset()}}
         undoText="";let prev=textDocumentProxy.documentContextBeforeInput?.last
         let gap=settings.value.mixedSpace && (prev?.unicodeScalars.first?.value ?? 0)>=0x4e00 && s.first?.isASCII==true && s.first?.isLetter==true
@@ -211,8 +244,9 @@ final class KeyboardController: UIInputViewController {
         if ["「」","『』","《》","“”","（）","【】","()","[]","{}","<>"].contains(s){cursor(-1)}
         previous=""
     }
-    func enter(){if !raw.isEmpty {if !hits.isEmpty {pick(0)}else{textDocumentProxy.unmarkText();reset()}}else{literal("\n")}}
+    func enter(){if enqueue(.enter,needsCandidate:true) {return};if !raw.isEmpty {if !hits.isEmpty {pick(0)}else{textDocumentProxy.unmarkText();reset()}}else{literal("\n")}}
     func space(){
+        if enqueue(.space,needsCandidate:true) {return}
         if !raw.isEmpty {enter();lastSpace=0;return}
         let now=CACurrentMediaTime()
         if settings.value.doubleSpace && now-lastSpace<0.32,let ctx=textDocumentProxy.documentContextBeforeInput,ctx.hasSuffix(" "){
@@ -220,8 +254,9 @@ final class KeyboardController: UIInputViewController {
             literal(token.last?.isNumber==true || token.contains(".") || token.contains("/") ? ".":"。");lastSpace=0
         } else {literal(" ");lastSpace=now}
     }
-    func cursor(_ delta:Int){if !raw.isEmpty{textDocumentProxy.unmarkText();reset()};undoText="";textDocumentProxy.adjustTextPosition(byCharacterOffset:delta)}
+    func cursor(_ delta:Int){if enqueue(.cursor(delta)) {return};if !raw.isEmpty{textDocumentProxy.unmarkText();reset()};undoText="";textDocumentProxy.adjustTextPosition(byCharacterOffset:delta)}
     func back(word:Bool=false){
+        if enqueue(.back(word)) {return}
         if !raw.isEmpty {raw.removeLast();taps.removeLast(6);hits=[]
             mark(String(decoding:raw,as:UTF8.self));if raw.isEmpty{textDocumentProxy.unmarkText();reset()}else{search()};return
         }

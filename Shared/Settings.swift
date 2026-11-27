@@ -13,12 +13,13 @@ struct Options: Codable, Equatable {
 final class Settings: ObservableObject {
     static let group = "group.com.custom.ime"
     static let signal = "com.custom.ime.preferences"
-    let shared = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) != nil
-    private var db: UserDefaults { shared ? (UserDefaults(suiteName: Self.group) ?? .standard) : .standard }
+    @Published private(set) var shared = false
+    private var db = UserDefaults.standard
     @Published var value = Options() {
         didSet {
             guard !loading, let d = try? JSONEncoder().encode(value) else { return }
-            db.set(d, forKey: "options.v1")
+            UserDefaults.standard.set(d, forKey: "options.v1")
+            if shared { db.set(d,forKey:"options.v1") }
             if shared { db.synchronize(); notify_post(Self.signal) }
         }
     }
@@ -48,9 +49,25 @@ final class Settings: ObservableObject {
     }
     private var token: Int32 = 0
     private var loading = false
-    init() {
+    init(allowShared: Bool = true) {
         reload()
-        if shared { notify_register_dispatch(Self.signal, &token, .main) { [weak self] _ in self?.reload() } }
+        setSharedAccess(allowShared)
+    }
+    func setSharedAccess(_ allowed: Bool) {
+        let container = allowed ? FileManager.default.containerURL(forSecurityApplicationGroupIdentifier:Self.group) : nil
+        let useGroup = container.map {FileManager.default.isWritableFile(atPath:$0.path)} ?? false
+        guard useGroup != shared else {return}
+        if shared {notify_cancel(token)}
+        db = useGroup ? (UserDefaults(suiteName:Self.group) ?? .standard) : .standard
+        shared = useGroup
+        if shared {
+            db.synchronize()
+            if db.data(forKey:"options.v1") == nil, let local=UserDefaults.standard.data(forKey:"options.v1") {
+                db.set(local,forKey:"options.v1");db.synchronize();notify_post(Self.signal)
+            }
+            notify_register_dispatch(Self.signal,&token,.main) { [weak self] _ in self?.reload() }
+        }
+        reload()
     }
     deinit { if shared { notify_cancel(token) } }
     func reload() {
@@ -63,6 +80,7 @@ final class Settings: ObservableObject {
         fields.merge(saved){_,new in new}
         guard let data=try? JSONSerialization.data(withJSONObject:fields),
               let v=try? JSONDecoder().decode(Options.self,from:data),v != value else{return}
+        if shared {UserDefaults.standard.set(d,forKey:"options.v1")}
         loading = true; value = v; loading = false
     }
 }
@@ -122,7 +140,7 @@ struct Controls: View {
                         .confirmationDialog("清空全部已学词条？", isPresented: $confirm) { Button("清空", role: .destructive, action: clear) }
                 }
             }
-            if !model.shared {
+            Group {
                 Section("同步设置和短语") {
                     if extensionMode {
                         Button("从剪贴板导入设置和短语") {
